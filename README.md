@@ -23,8 +23,8 @@ Local MCP (Model Context Protocol) server that enables access to Oura Ring data 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/meimakes/oura-mcp-local.git
-cd oura-mcp-local
+git clone https://github.com/meimakes/oura-mcp-server.git
+cd oura-mcp-server
 ```
 
 2. Install dependencies:
@@ -92,7 +92,7 @@ NODE_ENV=production
 # Token Encryption
 TOKEN_ENCRYPTION_KEY=<generated-key-from-step-4>
 
-# CORS Origin (allow all origins for Poke sub-agents)
+# CORS Origin (set to * to allow all origins)
 CORS_ORIGIN=*
 ```
 
@@ -325,7 +325,7 @@ MIT
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/meimakes/oura-mcp-local/issues
+- GitHub Issues: https://github.com/meimakes/oura-mcp-server/issues
 - Oura API Docs: https://cloud.ouraring.com/docs
 - MCP Protocol: https://modelcontextprotocol.io
 
