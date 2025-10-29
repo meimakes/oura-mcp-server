@@ -1,16 +1,18 @@
 # Oura MCP Server
 
-Local MCP (Model Context Protocol) server that enables access to Oura Ring data through OAuth2-authenticated API calls.
+Local MCP (Model Context Protocol) server that enables AI assistants to access your Oura Ring health data through OAuth2-authenticated API calls.
+
+Built for seamless integration with [Poke](https://poke.com) and other MCP-compatible clients.
 
 ## Features
 
-- OAuth2 authentication with PKCE for secure Oura API access
-- 10 MCP tools for accessing comprehensive health data
-- Token encryption and automatic refresh
-- Data caching to reduce API calls
-- Rate limiting protection
-- Server-Sent Events (SSE) for real-time communication
-- ngrok tunnel support for remote access
+- **OAuth2 with PKCE** - Secure authentication with automatic token refresh
+- **9 MCP Tools** - Access sleep, readiness, activity, heart rate, workouts, and more
+- **Dual Transport Support** - Both SSE and Streamable HTTP transports
+- **Token Encryption** - AES-256-GCM encryption for OAuth tokens at rest
+- **Smart Caching** - Reduce API calls with intelligent data caching
+- **Rate Limiting** - Built-in protection against API quota exhaustion
+- **ngrok Support** - Easy remote access for mobile and cloud integrations
 
 ## Prerequisites
 
@@ -123,11 +125,26 @@ npm run dev
 3. Approve the requested permissions
 4. You'll be redirected back with a success message
 
-### Connecting to Poke or Other MCP Clients
+### Connecting to MCP Clients
+
+#### Poke
+
+1. Open Poke app
+2. Go to Settings → Integrations → Add Integration
+3. Select "Model Context Protocol (MCP)"
+4. Enter:
+   - **Name:** Oura
+   - **Server URL:** `https://your-domain.ngrok.dev/sse`
+   - **API Key:** Your `AUTH_TOKEN` from `.env`
+5. Tap "Add Integration"
+
+The server supports both SSE and Streamable HTTP transports for maximum compatibility.
+
+#### Other MCP Clients
 
 Configure your MCP client with:
 - **Server URL:** `https://your-domain.ngrok.dev/sse`
-- **API Key:** Your `AUTH_TOKEN` from `.env`
+- **API Key (Bearer Token):** Your `AUTH_TOKEN` from `.env`
 
 ## Available MCP Tools
 
@@ -184,10 +201,7 @@ Get user-created tags and notes.
 - `start_date` (required): YYYY-MM-DD
 - `end_date` (optional): YYYY-MM-DD
 
-### 9. get_latest_ring_status
-Get current ring configuration and status.
-
-### 10. get_health_insights
+### 9. get_health_insights
 Get AI-powered insights based on recent data.
 
 **Parameters:**
@@ -210,9 +224,18 @@ POST /oauth/disconnect    - Disconnect and clear tokens (requires auth)
 ```
 
 ### MCP Endpoints
+
+The server supports both transport modes:
+
+**Streamable HTTP (recommended for Poke):**
 ```
-GET  /sse                 - SSE connection for MCP
-POST /message             - MCP tool calls (requires auth)
+POST /sse                 - JSON-RPC requests with direct responses
+```
+
+**Classic SSE:**
+```
+GET  /sse                 - Establish SSE connection
+POST /message             - Send JSON-RPC requests via session
 ```
 
 ## Security
@@ -329,12 +352,6 @@ For issues or questions:
 - Oura API Docs: https://cloud.ouraring.com/docs
 - MCP Protocol: https://modelcontextprotocol.io
 
-## Changelog
+## Contributing
 
-### v1.0.0 (2025-10-26)
-- Initial release
-- OAuth2 with PKCE support
-- 10 MCP tools for Oura data
-- Token encryption and refresh
-- Data caching
-- Rate limit handling
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.

@@ -9,7 +9,6 @@ import {
   isAccessTokenValid,
   isExpiringSoon,
   hasRefreshToken,
-  updateCachedTokens,
 } from './tokens.js';
 
 // OAuth endpoints
@@ -42,7 +41,7 @@ function generateState(): string {
 /**
  * Initiates OAuth2 authorization flow
  */
-export function handleAuthorize(req: Request, res: Response): void {
+export function handleAuthorize(_req: Request, res: Response): void {
   const { codeVerifier, codeChallenge } = generatePKCE();
   const state = generateState();
 

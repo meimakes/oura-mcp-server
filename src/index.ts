@@ -16,12 +16,15 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust proxy - required for ngrok (trust first proxy only)
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // CORS configuration
-const corsOrigin = process.env.CORS_ORIGIN || 'https://poke.com';
+const corsOrigin = process.env.CORS_ORIGIN || '*';
 app.use(
   cors({
     origin: corsOrigin === '*' ? true : corsOrigin,
@@ -49,7 +52,7 @@ const mcpLimiter = rateLimit({
 });
 
 // Health check endpoint
-app.get('/health', asyncHandler(async (req: Request, res: Response) => {
+app.get('/health', asyncHandler(async (_req: Request, res: Response) => {
   const oauthStatus = await getOAuthStatus();
   const rateLimitInfo = getRateLimitInfo();
   const hasTokens = await tokensFileExists();
@@ -74,27 +77,41 @@ app.get('/oauth/callback', asyncHandler(async (req: Request, res: Response) => {
   await handleCallback(req, res);
 }));
 
-app.get('/oauth/status', authenticateMCP, asyncHandler(async (req: Request, res: Response) => {
+app.get('/oauth/status', authenticateMCP, asyncHandler(async (_req: Request, res: Response) => {
   const status = await getOAuthStatus();
   res.json(status);
 }));
 
-app.post('/oauth/disconnect', authenticateMCP, asyncHandler(async (req: Request, res: Response) => {
+app.post('/oauth/disconnect', authenticateMCP, asyncHandler(async (_req: Request, res: Response) => {
   await disconnectOAuth();
   res.json({ success: true, message: 'OAuth disconnected successfully' });
 }));
 
 // MCP endpoints
-app.get('/sse', authenticateMCP, (req: Request, res: Response) => {
-  handleSSE(req, res);
+// OPTIONS handlers for CORS preflight
+app.options('/sse', (_req: Request, res: Response) => {
+  res.status(200).end();
 });
+
+app.options('/message', (_req: Request, res: Response) => {
+  res.status(200).end();
+});
+
+// Support both GET and POST for SSE endpoint (some MCP clients use POST)
+app.get('/sse', authenticateMCP, asyncHandler(async (req: Request, res: Response) => {
+  await handleSSE(req, res);
+}));
+
+app.post('/sse', authenticateMCP, asyncHandler(async (req: Request, res: Response) => {
+  await handleSSE(req, res);
+}));
 
 app.post('/message', authenticateMCP, mcpLimiter, asyncHandler(async (req: Request, res: Response) => {
   await handleMessage(req, res);
 }));
 
 // Root endpoint
-app.get('/', (req: Request, res: Response) => {
+app.get('/', (_req: Request, res: Response) => {
   res.send(`
     <!DOCTYPE html>
     <html>

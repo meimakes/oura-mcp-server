@@ -7,7 +7,6 @@ import {
   getWorkouts,
   getSleepPeriods,
   getTags,
-  getRingConfiguration,
 } from '../oura/client.js';
 import {
   validateParams,
@@ -17,9 +16,8 @@ import {
   healthInsightsSchema,
   getTodayDate,
   getDaysAgo,
-  dateToDatetime,
 } from '../utils/validation.js';
-import { cache } from '../utils/cache.js';
+import cache from '../utils/cache.js';
 import { MCPTool, MCPToolCall, MCPResponse } from '../oura/types.js';
 
 /**
@@ -165,14 +163,6 @@ export const tools: MCPTool[] = [
     },
   },
   {
-    name: 'get_latest_ring_status',
-    description: 'Get current ring configuration and status',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
-  },
-  {
     name: 'get_health_insights',
     description: 'Get AI-powered insights based on recent data',
     inputSchema: {
@@ -222,9 +212,6 @@ export async function executeToolCall(toolCall: MCPToolCall): Promise<MCPRespons
         break;
       case 'get_tags':
         result = await handleGetTags(args);
-        break;
-      case 'get_latest_ring_status':
-        result = await handleGetRingStatus();
         break;
       case 'get_health_insights':
         result = await handleGetHealthInsights(args);
@@ -277,10 +264,10 @@ async function handleGetPersonalInfo(): Promise<string> {
  * Handler for get_sleep_summary tool
  */
 async function handleGetSleepSummary(args: any): Promise<string> {
-  const params = validateParams(sleepSummarySchema, args);
+  const params = validateParams<{ start_date: string; end_date?: string; include_hrv?: boolean }>(sleepSummarySchema, args);
   const { start_date, end_date, include_hrv } = params;
 
-  const cacheKey = cache.constructor.generateKey('sleep_summary', params);
+  const cacheKey = `sleep_summary:${start_date}:${end_date || 'today'}:${include_hrv || false}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -317,10 +304,10 @@ async function handleGetSleepSummary(args: any): Promise<string> {
  * Handler for get_readiness_score tool
  */
 async function handleGetReadinessScore(args: any): Promise<string> {
-  const params = validateParams(dateRangeSchema, args);
+  const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = cache.constructor.generateKey('readiness', params);
+  const cacheKey = `readiness:${start_date}:${end_date || 'today'}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -361,10 +348,10 @@ async function handleGetReadinessScore(args: any): Promise<string> {
  * Handler for get_activity_summary tool
  */
 async function handleGetActivitySummary(args: any): Promise<string> {
-  const params = validateParams(dateRangeSchema, args);
+  const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = cache.constructor.generateKey('activity', params);
+  const cacheKey = `activity:${start_date}:${end_date || 'today'}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -406,10 +393,10 @@ async function handleGetActivitySummary(args: any): Promise<string> {
  * Handler for get_heart_rate tool
  */
 async function handleGetHeartRate(args: any): Promise<string> {
-  const params = validateParams(datetimeRangeSchema, args);
+  const params = validateParams<{ start_datetime: string; end_datetime?: string }>(datetimeRangeSchema, args);
   const { start_datetime, end_datetime } = params;
 
-  const cacheKey = cache.constructor.generateKey('heart_rate', params);
+  const cacheKey = `heart_rate:${start_datetime}:${end_datetime || 'now'}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -439,10 +426,10 @@ async function handleGetHeartRate(args: any): Promise<string> {
  * Handler for get_workouts tool
  */
 async function handleGetWorkouts(args: any): Promise<string> {
-  const params = validateParams(dateRangeSchema, args);
+  const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = cache.constructor.generateKey('workouts', params);
+  const cacheKey = `workouts:${start_date}:${end_date || 'today'}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -481,10 +468,10 @@ async function handleGetWorkouts(args: any): Promise<string> {
  * Handler for get_sleep_detailed tool
  */
 async function handleGetSleepDetailed(args: any): Promise<string> {
-  const params = validateParams(dateRangeSchema, args);
+  const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = cache.constructor.generateKey('sleep_detailed', params);
+  const cacheKey = `sleep_detailed:${start_date}:${end_date || 'today'}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -518,10 +505,10 @@ async function handleGetSleepDetailed(args: any): Promise<string> {
  * Handler for get_tags tool
  */
 async function handleGetTags(args: any): Promise<string> {
-  const params = validateParams(dateRangeSchema, args);
+  const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = cache.constructor.generateKey('tags', params);
+  const cacheKey = `tags:${start_date}:${end_date || 'today'}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -541,40 +528,10 @@ async function handleGetTags(args: any): Promise<string> {
 }
 
 /**
- * Handler for get_latest_ring_status tool
- */
-async function handleGetRingStatus(): Promise<string> {
-  const cacheKey = 'ring_status';
-  const cached = cache.get<string>(cacheKey);
-  if (cached) return cached;
-
-  const data = await getRingConfiguration();
-
-  if (data.length === 0) {
-    return JSON.stringify({ error: 'No ring configuration found' }, null, 2);
-  }
-
-  const latest = data[0];
-  const result = JSON.stringify(
-    {
-      ring_id: latest.id,
-      hardware_type: latest.hardware_type,
-      firmware_version: latest.firmware_version,
-      last_sync: latest.set_up_at,
-    },
-    null,
-    2
-  );
-
-  cache.set(cacheKey, result, 3600000); // Cache for 1 hour
-  return result;
-}
-
-/**
  * Handler for get_health_insights tool
  */
 async function handleGetHealthInsights(args: any): Promise<string> {
-  const params = validateParams(healthInsightsSchema, args);
+  const params = validateParams<{ days?: number }>(healthInsightsSchema, args);
   const days = params.days || 7;
 
   const endDate = getTodayDate();
