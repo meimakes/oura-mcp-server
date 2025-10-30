@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { logger } from '../utils/logger.js';
 
 /**
  * Error handling middleware for Express
@@ -9,7 +10,7 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  console.error('[ErrorHandler]', err);
+  logger.error('Request error:', err);
 
   // Determine error type and status code
   let statusCode = 500;

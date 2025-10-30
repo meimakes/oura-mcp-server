@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { getValidAccessToken } from '../oauth/handler.js';
+import { logger } from '../utils/logger.js';
 import {
   OuraApiResponse,
   OuraPersonalInfoResponse,
@@ -62,7 +63,7 @@ async function createClient(): Promise<AxiosInstance> {
     },
     (error: AxiosError) => {
       if (error.response?.status === 429) {
-        console.error('[OuraClient] Rate limit exceeded');
+        logger.error('Rate limit exceeded');
         throw new Error('Rate limit exceeded. Please try again later.');
       }
       throw error;
@@ -89,7 +90,7 @@ export async function getPersonalInfo(): Promise<OuraPersonalInfoResponse> {
     const response = await client.get<OuraPersonalInfoResponse>('/usercollection/personal_info');
     return response.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch personal info:', error);
+    logger.error('Failed to fetch personal info:', error);
     throw handleApiError(error);
   }
 }
@@ -115,7 +116,7 @@ export async function getDailySleep(
 
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch daily sleep:', error);
+    logger.error('Failed to fetch daily sleep:', error);
     throw handleApiError(error);
   }
 }
@@ -141,7 +142,7 @@ export async function getDailyActivity(
 
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch daily activity:', error);
+    logger.error('Failed to fetch daily activity:', error);
     throw handleApiError(error);
   }
 }
@@ -167,7 +168,7 @@ export async function getDailyReadiness(
 
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch daily readiness:', error);
+    logger.error('Failed to fetch daily readiness:', error);
     throw handleApiError(error);
   }
 }
@@ -193,7 +194,7 @@ export async function getHeartRate(
 
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch heart rate:', error);
+    logger.error('Failed to fetch heart rate:', error);
     throw handleApiError(error);
   }
 }
@@ -219,7 +220,7 @@ export async function getWorkouts(
 
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch workouts:', error);
+    logger.error('Failed to fetch workouts:', error);
     throw handleApiError(error);
   }
 }
@@ -245,7 +246,7 @@ export async function getSleepPeriods(
 
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch sleep periods:', error);
+    logger.error('Failed to fetch sleep periods:', error);
     throw handleApiError(error);
   }
 }
@@ -271,7 +272,7 @@ export async function getTags(
 
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch tags:', error);
+    logger.error('Failed to fetch tags:', error);
     throw handleApiError(error);
   }
 }
@@ -286,7 +287,7 @@ export async function getRingConfiguration(): Promise<OuraRingConfigurationRespo
     const response = await client.get<OuraApiResponse<OuraRingConfigurationResponse>>('/usercollection/ring_configuration');
     return response.data.data;
   } catch (error) {
-    console.error('[OuraClient] Failed to fetch ring configuration:', error);
+    logger.error('Failed to fetch ring configuration:', error);
     throw handleApiError(error);
   }
 }

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { tools, executeToolCall } from './tools.js';
 import { MCPToolCall } from '../oura/types.js';
+import { logger } from '../utils/logger.js';
 
 // Store active SSE connections by session ID
 const sseConnections = new Map<string, Response>();
@@ -10,16 +11,11 @@ const sseConnections = new Map<string, Response>();
  * Handles SSE endpoint for MCP connection
  */
 export async function handleSSE(req: Request, res: Response): Promise<void> {
-  console.log(`[MCP] Request to /sse via ${req.method}`);
-  console.log(`[MCP] Request headers:`, {
-    'user-agent': req.headers['user-agent'],
-    'accept': req.headers['accept'],
-    'content-type': req.headers['content-type'],
-  });
+  logger.debug(`Request to /sse via ${req.method}`);
 
   // Check if this is a JSON-RPC request (Streamable HTTP)
   if (req.method === 'POST' && req.body && req.body.jsonrpc) {
-    console.log('[MCP] Handling as Streamable HTTP JSON-RPC request');
+    logger.debug('Handling as Streamable HTTP JSON-RPC request');
     // This is a JSON-RPC request, handle it like a message
     await handleStreamableHTTPMessage(req, res);
     return;
@@ -29,7 +25,7 @@ export async function handleSSE(req: Request, res: Response): Promise<void> {
   // Generate unique session ID
   const sessionId = crypto.randomBytes(16).toString('hex');
 
-  console.log(`[MCP] Establishing SSE connection with session: ${sessionId}`);
+  logger.info(`SSE connection established: ${sessionId}`);
 
   // Set headers for SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -50,7 +46,6 @@ export async function handleSSE(req: Request, res: Response): Promise<void> {
 
   // Send endpoint event with session ID
   const endpointData = `/message?sessionId=${sessionId}`;
-  console.log(`[MCP] Sending endpoint event: ${endpointData}`);
 
   res.write('event: endpoint\n');
   res.write(`data: ${endpointData}\n\n`);
@@ -60,21 +55,17 @@ export async function handleSSE(req: Request, res: Response): Promise<void> {
     (res as any).flush();
   }
 
-  console.log(`[MCP] Endpoint event sent, connection staying open...`);
-
   // Keep connection alive with periodic pings (every 15 seconds)
   const pingInterval = setInterval(() => {
     try {
       if (!res.writableEnded) {
         res.write(`: ping ${Date.now()}\n\n`);
-        console.log(`[MCP] Sent ping for session: ${sessionId}`);
       } else {
-        console.log(`[MCP] Connection ended for session: ${sessionId}`);
         clearInterval(pingInterval);
         sseConnections.delete(sessionId);
       }
     } catch (error) {
-      console.error(`[MCP] Error sending ping for session ${sessionId}:`, error);
+      logger.error(`Error sending ping for session ${sessionId}:`, error);
       clearInterval(pingInterval);
       sseConnections.delete(sessionId);
     }
@@ -82,25 +73,25 @@ export async function handleSSE(req: Request, res: Response): Promise<void> {
 
   // Clean up on close
   req.on('close', () => {
-    console.log(`[MCP] Client closed connection for session: ${sessionId}`);
+    logger.debug(`Client closed connection: ${sessionId}`);
     clearInterval(pingInterval);
     sseConnections.delete(sessionId);
   });
 
   req.on('error', (error) => {
-    console.error(`[MCP] Connection error for session ${sessionId}:`, error);
+    logger.error(`Connection error for session ${sessionId}:`, error);
     clearInterval(pingInterval);
     sseConnections.delete(sessionId);
   });
 
   res.on('error', (error) => {
-    console.error(`[MCP] Response error for session ${sessionId}:`, error);
+    logger.error(`Response error for session ${sessionId}:`, error);
     clearInterval(pingInterval);
     sseConnections.delete(sessionId);
   });
 
   res.on('finish', () => {
-    console.log(`[MCP] Response finished for session: ${sessionId}`);
+    logger.debug(`Connection closed: ${sessionId}`);
     clearInterval(pingInterval);
     sseConnections.delete(sessionId);
   });
@@ -112,7 +103,8 @@ export async function handleSSE(req: Request, res: Response): Promise<void> {
 async function handleStreamableHTTPMessage(req: Request, res: Response): Promise<void> {
   const { jsonrpc, id, method, params } = req.body;
 
-  console.log('[MCP] Streamable HTTP message:', JSON.stringify({ jsonrpc, id, method, params }, null, 2));
+  logger.info(`Streamable HTTP: ${method}`);
+  logger.debug('Request:', JSON.stringify({ jsonrpc, id, method, params }, null, 2));
 
   // Validate JSON-RPC format
   if (jsonrpc !== '2.0') {
@@ -130,17 +122,15 @@ async function handleStreamableHTTPMessage(req: Request, res: Response): Promise
 
   // Handle notifications (no id field) - they don't get responses
   if (id === undefined || id === null) {
-    console.log('[MCP] Notification received (no response expected):', method);
+    logger.debug(`Notification: ${method}`);
 
     // Process known notifications
     if (method === 'notifications/initialized') {
-      console.log('[MCP] Client initialized notification received');
       res.status(204).end(); // No Content
       return;
     }
 
     // Unknown notification - just acknowledge it
-    console.log('[MCP] Unknown notification, acknowledging');
     res.status(204).end();
     return;
   }
@@ -177,10 +167,10 @@ async function handleStreamableHTTPMessage(req: Request, res: Response): Promise
       result,
     };
 
-    console.log('[MCP] Streamable HTTP response:', JSON.stringify(response, null, 2));
+    logger.debug('Response:', JSON.stringify(response, null, 2));
     res.json(response);
   } catch (error) {
-    console.error('[MCP] Error in Streamable HTTP:', error);
+    logger.error('Error in Streamable HTTP:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({
       jsonrpc: '2.0',
@@ -201,17 +191,8 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
   const sessionId = req.query.sessionId;
   const { jsonrpc, id, method, params } = req.body;
 
-  console.log('[MCP] Received message:', JSON.stringify({
-    sessionId,
-    jsonrpc,
-    id,
-    method,
-    params,
-    headers: {
-      origin: req.headers.origin,
-      contentType: req.headers['content-type'],
-    }
-  }, null, 2));
+  logger.info(`MCP: ${method} (session: ${sessionId})`);
+  logger.debug('Request:', JSON.stringify({ jsonrpc, id, method, params }, null, 2));
 
   // Validate JSON-RPC format
   if (jsonrpc !== '2.0') {
@@ -231,17 +212,15 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
 
   // Handle notifications (no id field) - they don't get responses
   if (id === undefined || id === null) {
-    console.log('[MCP] Notification received (no response expected):', method);
+    logger.debug(`Notification: ${method}`);
 
     // Process known notifications
     if (method === 'notifications/initialized') {
-      console.log('[MCP] Client initialized notification received');
       res.status(202).end(); // Accepted
       return;
     }
 
     // Unknown notification - just acknowledge it
-    console.log('[MCP] Unknown notification, acknowledging');
     res.status(202).end();
     return;
   }
@@ -283,7 +262,7 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
       result,
     };
 
-    console.log('[MCP] Sending response:', JSON.stringify(response, null, 2));
+    logger.debug('Response:', JSON.stringify(response, null, 2));
 
     // Send response via SSE stream
     if (sessionId && typeof sessionId === 'string') {
@@ -291,11 +270,10 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
       if (sseConnection) {
         sseConnection.write('event: message\n');
         sseConnection.write(`data: ${JSON.stringify(response)}\n\n`);
-        console.log(`[MCP] Response sent via SSE for session: ${sessionId}`);
         // Return 202 Accepted to the POST request
         res.status(202).end();
       } else {
-        console.warn(`[MCP] No SSE connection found for session: ${sessionId}`);
+        logger.warn(`No SSE connection found for session: ${sessionId}`);
         // Fallback: send via HTTP response
         res.json(response);
       }
@@ -304,7 +282,7 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
       res.json(response);
     }
   } catch (error) {
-    console.error('[MCP] Error handling message:', error);
+    logger.error('Error handling message:', error);
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const errorCode = errorMessage.includes('authenticate') ? -32000 : -32603;

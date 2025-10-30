@@ -35,7 +35,6 @@ class Cache {
       return null;
     }
 
-    console.log(`[Cache] Hit: ${key}`);
     return entry.data as T;
   }
 
@@ -52,8 +51,6 @@ class Cache {
       data,
       expiresAt,
     });
-
-    console.log(`[Cache] Set: ${key} (expires in ${(ttl || this.defaultTTL) / 1000}s)`);
   }
 
   /**
@@ -71,7 +68,6 @@ class Cache {
    */
   delete(key: string): void {
     this.cache.delete(key);
-    console.log(`[Cache] Deleted: ${key}`);
   }
 
   /**
@@ -79,7 +75,6 @@ class Cache {
    */
   clear(): void {
     this.cache.clear();
-    console.log('[Cache] Cleared all entries');
   }
 
   /**
@@ -106,10 +101,6 @@ class Cache {
 
     for (const key of keysToDelete) {
       this.cache.delete(key);
-    }
-
-    if (keysToDelete.length > 0) {
-      console.log(`[Cache] Cleaned ${keysToDelete.length} expired entries`);
     }
   }
 

@@ -19,6 +19,7 @@ import {
 } from '../utils/validation.js';
 import cache from '../utils/cache.js';
 import { MCPTool, MCPToolCall, MCPResponse } from '../oura/types.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * List of all available MCP tools
@@ -183,7 +184,8 @@ export const tools: MCPTool[] = [
 export async function executeToolCall(toolCall: MCPToolCall): Promise<MCPResponse> {
   const { name, arguments: args } = toolCall;
 
-  console.log(`[MCP] Executing tool: ${name}`, args);
+  logger.info(`Tool: ${name}`);
+  logger.debug(`Tool args:`, args);
 
   try {
     let result: string;
@@ -229,7 +231,7 @@ export async function executeToolCall(toolCall: MCPToolCall): Promise<MCPRespons
       ],
     };
   } catch (error) {
-    console.error(`[MCP] Error executing tool ${name}:`, error);
+    logger.error(`Error executing tool ${name}:`, error);
     throw error;
   }
 }

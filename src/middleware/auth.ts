@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { logger } from '../utils/logger.js';
 
 /**
  * Middleware to authenticate MCP requests using API key
@@ -37,7 +38,7 @@ export function authenticateMCP(req: Request, res: Response, next: NextFunction)
   const authToken = process.env.AUTH_TOKEN;
 
   if (!authToken) {
-    console.error('[Auth] AUTH_TOKEN not configured in environment');
+    logger.error('AUTH_TOKEN not configured in environment');
     res.status(500).json({
       error: {
         code: -32603,
@@ -51,7 +52,7 @@ export function authenticateMCP(req: Request, res: Response, next: NextFunction)
   }
 
   if (token !== authToken) {
-    console.warn('[Auth] Invalid API key attempt');
+    logger.warn('Invalid API key attempt');
     res.status(401).json({
       error: {
         code: -32000,

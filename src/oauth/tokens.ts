@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { encryptToken, decryptToken } from '../utils/encryption.js';
 import { OAuthTokens } from '../oura/types.js';
+import { logger } from '../utils/logger.js';
 
 const TOKENS_FILE = path.join(process.cwd(), 'tokens.json');
 const TOKEN_REFRESH_BUFFER = 5 * 60 * 1000; // Refresh 5 minutes before expiration
@@ -25,9 +26,9 @@ export async function saveTokens(tokens: OAuthTokens): Promise<void> {
 
     await fs.writeFile(TOKENS_FILE, JSON.stringify(encryptedTokens, null, 2), 'utf8');
     cachedTokens = tokens;
-    console.log('[TokenManager] Tokens saved successfully');
+    logger.info('Tokens saved successfully');
   } catch (error) {
-    console.error('[TokenManager] Failed to save tokens:', error);
+    logger.error('Failed to save tokens:', error);
     throw new Error(`Failed to save tokens: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -55,14 +56,14 @@ export async function loadTokens(): Promise<OAuthTokens | null> {
     };
 
     cachedTokens = tokens;
-    console.log('[TokenManager] Tokens loaded successfully');
+    logger.info('Tokens loaded successfully');
     return tokens;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      console.log('[TokenManager] No tokens file found');
+      logger.info('No tokens file found');
       return null;
     }
-    console.error('[TokenManager] Failed to load tokens:', error);
+    logger.error('Failed to load tokens:', error);
     return null;
   }
 }
@@ -74,10 +75,10 @@ export async function clearTokens(): Promise<void> {
   try {
     await fs.unlink(TOKENS_FILE);
     cachedTokens = null;
-    console.log('[TokenManager] Tokens cleared successfully');
+    logger.info('Tokens cleared successfully');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[TokenManager] Failed to clear tokens:', error);
+      logger.error('Failed to clear tokens:', error);
       throw new Error(`Failed to clear tokens: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }

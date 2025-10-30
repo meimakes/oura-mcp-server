@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { Request, Response } from 'express';
 import { OAuthTokens } from '../oura/types.js';
+import { logger } from '../utils/logger.js';
 import {
   saveTokens,
   loadTokens,
@@ -76,7 +77,7 @@ export function handleAuthorize(_req: Request, res: Response): void {
   authUrl.searchParams.append('code_challenge', codeChallenge);
   authUrl.searchParams.append('code_challenge_method', 'S256');
 
-  console.log('[OAuth] Redirecting to Oura authorization page');
+  logger.info('Redirecting to Oura authorization page');
   res.redirect(authUrl.toString());
 }
 
@@ -87,7 +88,7 @@ export async function handleCallback(req: Request, res: Response): Promise<void>
   const { code, state, error } = req.query;
 
   if (error) {
-    console.error('[OAuth] Authorization error:', error);
+    logger.error('Authorization error:', error);
     res.status(400).send(`Authorization failed: ${error}`);
     return;
   }
@@ -110,7 +111,7 @@ export async function handleCallback(req: Request, res: Response): Promise<void>
     const tokens = await exchangeCodeForTokens(code, storedPKCE.codeVerifier);
     await saveTokens(tokens);
 
-    console.log('[OAuth] Authorization successful, tokens saved');
+    logger.info('Authorization successful, tokens saved');
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -132,7 +133,7 @@ export async function handleCallback(req: Request, res: Response): Promise<void>
       </html>
     `);
   } catch (error) {
-    console.error('[OAuth] Token exchange failed:', error);
+    logger.error('Token exchange failed:', error);
     res.status(500).send(`Token exchange failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -204,7 +205,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
   });
 
   try {
-    console.log('[OAuth] Refreshing access token');
+    logger.info('Refreshing access token');
     const response = await axios.post(OURA_TOKEN_URL, params.toString(), {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -222,12 +223,12 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
     };
 
     await saveTokens(tokens);
-    console.log('[OAuth] Access token refreshed successfully');
+    logger.info('Access token refreshed successfully');
 
     return tokens;
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error('[OAuth] Token refresh failed:', error.response?.data);
+      logger.error('Token refresh failed:', error.response?.data);
       throw new Error(`Token refresh failed: ${error.response?.data?.error || error.message}`);
     }
     throw error;
@@ -255,7 +256,7 @@ export async function getValidAccessToken(): Promise<string> {
       tokens = await refreshAccessToken(tokens.refresh_token);
       return tokens.access_token;
     } catch (error) {
-      console.error('[OAuth] Failed to refresh token:', error);
+      logger.error('Failed to refresh token:', error);
       throw new Error('Failed to refresh access token. Please re-authenticate.');
     }
   }
@@ -289,5 +290,5 @@ export async function getOAuthStatus(): Promise<{
  */
 export async function disconnectOAuth(): Promise<void> {
   await clearTokens();
-  console.log('[OAuth] Disconnected successfully');
+  logger.info('Disconnected successfully');
 }
