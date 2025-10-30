@@ -16,7 +16,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Trust proxy - required for ngrok (trust first proxy only)
+// Trust proxy - required for Railway, ngrok, and other reverse proxies
 app.set('trust proxy', 1);
 
 // Middleware
@@ -154,7 +154,7 @@ app.get('/', (_req: Request, res: Response) => {
       </head>
       <body>
         <h1>🔵 Oura MCP Server</h1>
-        <p>Local MCP server for accessing Oura Ring data via OAuth2</p>
+        <p>MCP server for accessing Oura Ring data via OAuth2</p>
 
         <div class="status">
           <strong>Status:</strong> Running on port ${PORT}<br>
@@ -216,6 +216,10 @@ app.use(errorHandler);
 
 // Start server
 app.listen(PORT, () => {
+  const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : `http://localhost:${PORT}`;
+
   console.log(`
 ╔════════════════════════════════════════════════════════╗
 ║         🔵 Oura MCP Server                            ║
@@ -225,14 +229,14 @@ app.listen(PORT, () => {
 ║  Env:        ${process.env.NODE_ENV || 'development'}                              ║
 ╟────────────────────────────────────────────────────────╢
 ║  Endpoints:                                            ║
-║    • http://localhost:${PORT}                           ║
-║    • http://localhost:${PORT}/health                    ║
-║    • http://localhost:${PORT}/oauth/authorize           ║
+║    • ${baseUrl.padEnd(48)}║
+║    • ${(baseUrl + '/health').padEnd(48)}║
+║    • ${(baseUrl + '/oauth/authorize').padEnd(48)}║
 ╟────────────────────────────────────────────────────────╢
 ║  Next Steps:                                           ║
-║    1. Start ngrok: ngrok http ${PORT}                   ║
-║    2. Update OURA_REDIRECT_URI in .env                 ║
-║    3. Visit /oauth/authorize to connect               ║
+║    1. Set OURA_REDIRECT_URI in environment             ║
+║    2. Visit /oauth/authorize to connect Oura          ║
+║    3. Configure MCP client with server URL            ║
 ╚════════════════════════════════════════════════════════╝
   `);
 
