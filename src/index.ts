@@ -77,7 +77,12 @@ const mcpLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Health check endpoint (requires authentication to prevent information disclosure)
+// Basic health check for Railway/monitoring (no auth required)
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// Detailed health check endpoint (requires authentication to prevent information disclosure)
 app.get('/health', authenticateMCP, asyncHandler(async (_req: Request, res: Response) => {
   const oauthStatus = await getOAuthStatus();
   const rateLimitInfo = getRateLimitInfo();
