@@ -1,10 +1,12 @@
 import dotenv from 'dotenv';
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { handleAuthorize, handleCallback, getOAuthStatus, disconnectOAuth } from './oauth/handler.js';
 import { handleSSE, handleMessage } from './mcp/server.js';
 import { authenticateMCP } from './middleware/auth.js';
+import { tokenRateLimiter } from './middleware/tokenRateLimit.js';
 import { errorHandler, notFoundHandler, asyncHandler } from './middleware/errorHandler.js';
 import { cache } from './utils/cache.js';
 import { getRateLimitInfo } from './oura/client.js';
@@ -19,9 +21,33 @@ const PORT = process.env.PORT || 3001;
 // Trust proxy - required for Railway, ngrok, and other reverse proxies
 app.set('trust proxy', 1);
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// HTTPS enforcement middleware (except for local development)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (process.env.NODE_ENV === 'production' && !req.secure && req.get('x-forwarded-proto') !== 'https') {
+    return res.redirect(301, `https://${req.get('host')}${req.url}`);
+  }
+  next();
+});
+
+// Security headers with Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true,
+  },
+}));
+
+// Request size limits (100kb for JSON, prevent DoS)
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // CORS configuration
 const corsOrigin = process.env.CORS_ORIGIN || '*';
@@ -51,8 +77,8 @@ const mcpLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Health check endpoint
-app.get('/health', asyncHandler(async (_req: Request, res: Response) => {
+// Health check endpoint (requires authentication to prevent information disclosure)
+app.get('/health', authenticateMCP, asyncHandler(async (_req: Request, res: Response) => {
   const oauthStatus = await getOAuthStatus();
   const rateLimitInfo = getRateLimitInfo();
   const hasTokens = await tokensFileExists();
@@ -98,15 +124,15 @@ app.options('/message', (_req: Request, res: Response) => {
 });
 
 // Support both GET and POST for SSE endpoint (some MCP clients use POST)
-app.get('/sse', authenticateMCP, asyncHandler(async (req: Request, res: Response) => {
+app.get('/sse', authenticateMCP, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   await handleSSE(req, res);
 }));
 
-app.post('/sse', authenticateMCP, asyncHandler(async (req: Request, res: Response) => {
+app.post('/sse', authenticateMCP, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   await handleSSE(req, res);
 }));
 
-app.post('/message', authenticateMCP, mcpLimiter, asyncHandler(async (req: Request, res: Response) => {
+app.post('/message', authenticateMCP, tokenRateLimiter, mcpLimiter, asyncHandler(async (req: Request, res: Response) => {
   await handleMessage(req, res);
 }));
 
