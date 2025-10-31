@@ -41,21 +41,6 @@ export function errorHandler(
     message = 'Not found';
   }
 
-  // Sanitize error details in production to prevent information leakage
-  if (process.env.NODE_ENV === 'production') {
-    // In production, only send generic error messages
-    if (statusCode === 500) {
-      details = 'An internal error occurred. Please try again later.';
-    } else if (statusCode === 502) {
-      details = 'External service temporarily unavailable. Please try again later.';
-    } else {
-      // For client errors, sanitize but keep useful info
-      details = details.split('\n')[0]; // Only first line
-      // Remove any file paths or stack traces
-      details = details.replace(/\/[^\s]+/g, '').replace(/at .+/g, '').trim();
-    }
-  }
-
   // Send JSON-RPC error response
   res.status(statusCode).json({
     jsonrpc: '2.0',

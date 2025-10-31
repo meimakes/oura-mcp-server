@@ -44,27 +44,8 @@ class Logger {
 
   debug(message: string, ...args: any[]): void {
     if (this.shouldLog('debug')) {
-      console.log(`[DEBUG] ${message}`, ...this.sanitizeArgs(args));
+      console.log(`[DEBUG] ${message}`, ...args);
     }
-  }
-
-  /**
-   * Sanitize arguments to prevent logging sensitive data
-   */
-  private sanitizeArgs(args: any[]): any[] {
-    // In production, don't log potentially sensitive arguments
-    if (process.env.NODE_ENV === 'production') {
-      return args.map(arg => {
-        if (typeof arg === 'object' && arg !== null) {
-          return '[Object - redacted in production]';
-        }
-        if (typeof arg === 'string' && arg.length > 100) {
-          return arg.substring(0, 100) + '... [truncated]';
-        }
-        return arg;
-      });
-    }
-    return args;
   }
 }
 

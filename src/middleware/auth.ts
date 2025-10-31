@@ -1,22 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
-import { auditLog, AuditEventType, getClientIP } from '../utils/audit.js';
 
 /**
  * Middleware to authenticate MCP requests using API key
  */
 export function authenticateMCP(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
-  const clientIP = getClientIP(req);
-  const userAgent = req.headers['user-agent'];
 
   if (!authHeader) {
-    auditLog(AuditEventType.AUTH_FAILURE, false, {
-      ipAddress: clientIP,
-      userAgent,
-      metadata: { reason: 'missing_header', path: req.path }
-    });
-
     res.status(401).json({
       error: {
         code: -32000,
@@ -32,12 +23,6 @@ export function authenticateMCP(req: Request, res: Response, next: NextFunction)
   const [bearer, token] = authHeader.split(' ');
 
   if (bearer !== 'Bearer' || !token) {
-    auditLog(AuditEventType.AUTH_FAILURE, false, {
-      ipAddress: clientIP,
-      userAgent,
-      metadata: { reason: 'invalid_format', path: req.path }
-    });
-
     res.status(401).json({
       error: {
         code: -32000,
@@ -68,12 +53,6 @@ export function authenticateMCP(req: Request, res: Response, next: NextFunction)
 
   if (token !== authToken) {
     logger.warn('Invalid API key attempt');
-    auditLog(AuditEventType.AUTH_FAILURE, false, {
-      ipAddress: clientIP,
-      userAgent,
-      metadata: { reason: 'invalid_token', path: req.path }
-    });
-
     res.status(401).json({
       error: {
         code: -32000,
@@ -87,12 +66,6 @@ export function authenticateMCP(req: Request, res: Response, next: NextFunction)
   }
 
   // Authentication successful
-  auditLog(AuditEventType.AUTH_SUCCESS, true, {
-    ipAddress: clientIP,
-    userAgent,
-    metadata: { path: req.path, method: req.method }
-  });
-
   next();
 }
 
