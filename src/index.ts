@@ -238,7 +238,7 @@ app.get('/', (_req: Request, res: Response) => {
         </ol>
 
         <h2>Documentation</h2>
-        <p>For full documentation, see the <a href="https://github.com/yourusername/oura-mcp-server">README.md</a></p>
+        <p>For full documentation, see the <a href="https://github.com/meimakes/oura-mcp-server">README.md</a></p>
       </body>
     </html>
   `);
