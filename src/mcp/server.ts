@@ -3,9 +3,39 @@ import crypto from 'crypto';
 import { tools, executeToolCall } from './tools.js';
 import { MCPToolCall } from '../oura/types.js';
 import { logger } from '../utils/logger.js';
+import { auditLog, AuditEventType } from '../utils/audit.js';
 
-// Store active SSE connections by session ID
-const sseConnections = new Map<string, Response>();
+// Store active SSE connections by session ID with session info
+// Generous 24-hour timeout for AI agents
+const SESSION_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
+interface SessionInfo {
+  response: Response;
+  createdAt: number;
+  lastActivity: number;
+}
+const sseConnections = new Map<string, SessionInfo>();
+
+// Cleanup expired sessions periodically (every 30 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, session] of sseConnections.entries()) {
+    if (now - session.lastActivity > SESSION_TIMEOUT_MS) {
+      logger.info(`Session expired: ${sessionId}`);
+      auditLog(AuditEventType.SESSION_EXPIRED, true, {
+        metadata: { sessionId, duration: now - session.createdAt }
+      });
+
+      try {
+        if (!session.response.writableEnded) {
+          session.response.end();
+        }
+      } catch (error) {
+        logger.error(`Error closing expired session ${sessionId}:`, error);
+      }
+      sseConnections.delete(sessionId);
+    }
+  }
+}, 30 * 60 * 1000);
 
 /**
  * Handles SSE endpoint for MCP connection
@@ -41,8 +71,17 @@ export async function handleSSE(req: Request, res: Response): Promise<void> {
   res.status(200);
   res.flushHeaders();
 
-  // Store SSE connection for this session
-  sseConnections.set(sessionId, res);
+  // Store SSE connection for this session with timestamp
+  const now = Date.now();
+  sseConnections.set(sessionId, {
+    response: res,
+    createdAt: now,
+    lastActivity: now
+  });
+
+  auditLog(AuditEventType.SESSION_CREATED, true, {
+    metadata: { sessionId }
+  });
 
   // Send endpoint event with session ID
   const endpointData = `/message?sessionId=${sessionId}`;

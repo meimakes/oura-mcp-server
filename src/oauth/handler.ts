@@ -17,7 +17,19 @@ const OURA_AUTH_URL = 'https://cloud.ouraring.com/oauth/authorize';
 const OURA_TOKEN_URL = 'https://api.ouraring.com/oauth/token';
 
 // PKCE state storage (in-memory for simplicity)
-const pkceState = new Map<string, { codeVerifier: string; state: string }>();
+// Generous 1 hour timeout for AI agents that may take time to complete OAuth flow
+const STATE_EXPIRATION_MS = 60 * 60 * 1000; // 1 hour
+const pkceState = new Map<string, { codeVerifier: string; state: string; expiresAt: number }>();
+
+// Cleanup expired PKCE states periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [state, data] of pkceState.entries()) {
+    if (now > data.expiresAt) {
+      pkceState.delete(state);
+    }
+  }
+}, 5 * 60 * 1000); // Cleanup every 5 minutes
 
 /**
  * Generates PKCE code verifier and challenge
@@ -46,8 +58,12 @@ export function handleAuthorize(_req: Request, res: Response): void {
   const { codeVerifier, codeChallenge } = generatePKCE();
   const state = generateState();
 
-  // Store PKCE state
-  pkceState.set(state, { codeVerifier, state });
+  // Store PKCE state with expiration
+  pkceState.set(state, {
+    codeVerifier,
+    state,
+    expiresAt: Date.now() + STATE_EXPIRATION_MS
+  });
 
   const clientId = process.env.OURA_CLIENT_ID;
   const redirectUri = process.env.OURA_REDIRECT_URI;
@@ -102,6 +118,13 @@ export async function handleCallback(req: Request, res: Response): Promise<void>
   const storedPKCE = pkceState.get(state);
   if (!storedPKCE) {
     res.status(400).send('Invalid state parameter (CSRF protection)');
+    return;
+  }
+
+  // Check if state has expired
+  if (Date.now() > storedPKCE.expiresAt) {
+    pkceState.delete(state);
+    res.status(400).send('OAuth state expired. Please restart the authorization flow.');
     return;
   }
 
