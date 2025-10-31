@@ -307,8 +307,11 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
     if (sessionId && typeof sessionId === 'string') {
       const sseConnection = sseConnections.get(sessionId);
       if (sseConnection) {
-        sseConnection.write('event: message\n');
-        sseConnection.write(`data: ${JSON.stringify(response)}\n\n`);
+        // Update last activity time
+        sseConnection.lastActivity = Date.now();
+
+        sseConnection.response.write('event: message\n');
+        sseConnection.response.write(`data: ${JSON.stringify(response)}\n\n`);
         // Return 202 Accepted to the POST request
         res.status(202).end();
       } else {
@@ -342,8 +345,11 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
     if (sessionId && typeof sessionId === 'string') {
       const sseConnection = sseConnections.get(sessionId);
       if (sseConnection) {
-        sseConnection.write('event: message\n');
-        sseConnection.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+        // Update last activity time
+        sseConnection.lastActivity = Date.now();
+
+        sseConnection.response.write('event: message\n');
+        sseConnection.response.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
         res.status(202).end();
         return;
       }
