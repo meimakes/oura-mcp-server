@@ -21,8 +21,13 @@ const PORT = process.env.PORT || 3001;
 // Trust proxy - required for Railway, ngrok, and other reverse proxies
 app.set('trust proxy', 1);
 
-// HTTPS enforcement middleware (except for local development)
+// HTTPS enforcement middleware (except for local development and health checks)
 app.use((req: Request, res: Response, next: NextFunction) => {
+  // Skip HTTPS enforcement for health check endpoints
+  if (req.path === '/healthz' || req.path === '/health') {
+    return next();
+  }
+
   if (process.env.NODE_ENV === 'production' && !req.secure && req.get('x-forwarded-proto') !== 'https') {
     return res.redirect(301, `https://${req.get('host')}${req.url}`);
   }
@@ -233,7 +238,7 @@ app.get('/', (_req: Request, res: Response) => {
         </ol>
 
         <h2>Documentation</h2>
-        <p>For full documentation, see the <a href="https://github.com/yourusername/oura-mcp-server">README.md</a></p>
+        <p>For full documentation, see the <a href="https://github.com/meimakes/oura-mcp-server">README.md</a></p>
       </body>
     </html>
   `);
