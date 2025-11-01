@@ -138,6 +138,9 @@ TOKEN_ENCRYPTION_KEY=<generated-key>
 
 # CORS Origin
 CORS_ORIGIN=*
+
+# Logging (optional)
+LOG_LEVEL=info  # Options: error, warn, info, debug
 ```
 
 ## Usage
@@ -299,6 +302,30 @@ Authorization: Bearer YOUR_AUTH_TOKEN
 
 ### CORS
 Configure allowed origins in `.env` with `CORS_ORIGIN`.
+
+### Logging
+
+The server uses structured logging with configurable log levels:
+
+- **`error`** - Only critical errors (recommended for production)
+- **`warn`** - Warnings and errors
+- **`info`** - Key operations, warnings, and errors (default)
+- **`debug`** - Full verbosity including request/response bodies
+
+Configure via the `LOG_LEVEL` environment variable:
+
+```bash
+LOG_LEVEL=info  # Default - balanced logging
+LOG_LEVEL=error # Production - minimal output
+LOG_LEVEL=debug # Development - verbose debugging
+```
+
+**What gets logged at each level:**
+
+- **Error**: Authentication failures, API errors, OAuth failures, rate limits
+- **Warn**: Invalid API key attempts, missing SSE sessions
+- **Info**: SSE connections, tool executions, OAuth operations, MCP method calls
+- **Debug**: Full JSON-RPC requests/responses, connection lifecycle events
 
 ## Troubleshooting
 
