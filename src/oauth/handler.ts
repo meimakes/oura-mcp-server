@@ -277,6 +277,9 @@ export async function getValidAccessToken(): Promise<string> {
   if (hasRefreshToken(tokens)) {
     try {
       tokens = await refreshAccessToken(tokens.refresh_token);
+      // Save the refreshed tokens to disk
+      await saveTokens(tokens);
+      logger.info('Successfully refreshed and saved OAuth tokens');
       return tokens.access_token;
     } catch (error) {
       logger.error('Failed to refresh token:', error);
