@@ -4,7 +4,7 @@ MCP (Model Context Protocol) server that enables AI assistants to access your Ou
 
 Built for seamless integration with [Poke](https://poke.com) and other MCP-compatible clients. Deploy to Railway for production use or run locally for development.
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https://github.com/meimakes/oura-mcp-server)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/Kt-3nX?referralCode=7zdyjn&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 ## Features
 
