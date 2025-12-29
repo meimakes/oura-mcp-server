@@ -805,6 +805,7 @@ async function handleGetEnhancedTags(args: any): Promise<string> {
   const mapped = data.map((item) => ({
     id: item.id,
     tag_type_code: item.tag_type_code,
+    custom_name: item.custom_name,
     start_time: item.start_time,
     end_time: item.end_time,
     start_day: item.start_day,
@@ -812,10 +813,14 @@ async function handleGetEnhancedTags(args: any): Promise<string> {
     comment: item.comment,
   }));
 
-  const tagTypes = [...new Set(mapped.map((item) => item.tag_type_code))];
+  const tagTypes = [...new Set(mapped.map((item) => item.tag_type_code).filter(Boolean))];
+  const customTags = mapped
+    .filter((item) => item.tag_type_code === "custom" && item.custom_name)
+    .map((item) => item.custom_name);
   const summary = {
     total_tags: mapped.length,
     tag_types: tagTypes,
+    custom_tag_names: [...new Set(customTags)],
   };
 
   const result = JSON.stringify({ data: mapped, summary }, null, 2);

@@ -510,10 +510,11 @@ export interface OuraSleepTimeResponse {
 // Enhanced Tag Response
 export interface OuraEnhancedTagResponse {
   id: string;
-  tag_type_code: string;
+  tag_type_code: string | null;
   start_time: string | null;
   end_time: string | null;
   start_day: string;
   end_day: string | null;
   comment: string | null;
+  custom_name: string | null;
 }
