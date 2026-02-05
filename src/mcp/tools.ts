@@ -290,25 +290,32 @@ async function handleGetPersonalInfo(): Promise<string> {
  *    - NEW: hrv_average_ms (raw HRV in milliseconds)
  *    - NEW: resting_heart_rate_bpm (raw RHR in beats per minute)
  *    - WHY: Users need access to raw physiological values, not just contributor scores
+ * 
+ * 6. CACHE KEY BUG: Fixed to use actual end_date instead of literal 'today'
+ *    - BEFORE: cacheKey = `sleep_summary:${start_date}:${end_date || 'today'}:${include_hrv}`
+ *    - AFTER: cacheKey = `sleep_summary:${start_date}:${actualEndDate}:${include_hrv}`
+ *    - WHY: Cache key must match actual data fetched, prevents cross-day contamination
  */
 async function handleGetSleepSummary(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string; include_hrv?: boolean }>(sleepSummarySchema, args);
   const { start_date, end_date, include_hrv } = params;
 
-  const cacheKey = `sleep_summary:${start_date}:${end_date || 'today'}:${include_hrv || false}`;
+  // FIXED: Resolve end_date to actual date for cache key consistency
+  const actualEndDate = end_date || getTodayDate();
+  const cacheKey = `sleep_summary:${start_date}:${actualEndDate}:${include_hrv || false}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
   // FIXED: Fetch ALL necessary data sources for accurate calculations
   const [data, detailedSleepData] = await Promise.all([
-    getDailySleep(start_date, end_date || getTodayDate()),
-    getSleepPeriods(start_date, end_date || getTodayDate()), // CRITICAL: For accurate duration/efficiency
+    getDailySleep(start_date, actualEndDate),
+    getSleepPeriods(start_date, actualEndDate), // CRITICAL: For accurate duration/efficiency
   ]);
   
   // FIXED: Fetch both readiness (for HRV balance + RHR) and detailed sleep (for HRV samples)
   let readinessData: any[] = [];
   if (include_hrv) {
-    readinessData = await getDailyReadiness(start_date, end_date || getTodayDate());
+    readinessData = await getDailyReadiness(start_date, actualEndDate);
   }
 
   const mapped = data.map((item) => {
@@ -398,16 +405,20 @@ async function handleGetSleepSummary(args: any): Promise<string> {
  * Handler for get_readiness_score tool
  * 
  * Contains REAL RHR and HRV values from Oura getDailyReadiness endpoint
+ * 
+ * CACHE KEY BUG FIX: Use actual end_date instead of literal 'today'
  */
 async function handleGetReadinessScore(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = `readiness:${start_date}:${end_date || 'today'}`;
+  // FIXED: Resolve end_date to actual date for cache key consistency
+  const actualEndDate = end_date || getTodayDate();
+  const cacheKey = `readiness:${start_date}:${actualEndDate}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getDailyReadiness(start_date, end_date || getTodayDate());
+  const data = await getDailyReadiness(start_date, actualEndDate);
 
   const mapped = data.map((item) => ({
     date: item.day,
@@ -444,16 +455,20 @@ async function handleGetReadinessScore(args: any): Promise<string> {
 
 /**
  * Handler for get_activity_summary tool
+ * 
+ * CACHE KEY BUG FIX: Use actual end_date instead of literal 'today'
  */
 async function handleGetActivitySummary(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = `activity:${start_date}:${end_date || 'today'}`;
+  // FIXED: Resolve end_date to actual date for cache key consistency
+  const actualEndDate = end_date || getTodayDate();
+  const cacheKey = `activity:${start_date}:${actualEndDate}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getDailyActivity(start_date, end_date || getTodayDate());
+  const data = await getDailyActivity(start_date, actualEndDate);
 
   const mapped = data.map((item) => ({
     date: item.day,
@@ -500,12 +515,19 @@ async function handleGetActivitySummary(args: any): Promise<string> {
  *    - BEFORE: No timezone awareness
  *    - AFTER: Proper date parsing from ISO strings
  *    - WHY: Ensure accurate time-based queries
+ * 
+ * 3. CACHE KEY BUG: Use actual end_datetime instead of literal 'now'
+ *    - BEFORE: cacheKey = `heart_rate:${start_datetime}:${end_datetime || 'now'}`
+ *    - AFTER: cacheKey = `heart_rate:${start_datetime}:${actualEndDatetime}`
+ *    - WHY: Cache key must match actual data fetched
  */
 async function handleGetHeartRate(args: any): Promise<string> {
   const params = validateParams<{ start_datetime: string; end_datetime?: string }>(datetimeRangeSchema, args);
   const { start_datetime, end_datetime } = params;
 
-  const cacheKey = `heart_rate:${start_datetime}:${end_datetime || 'now'}`;
+  // FIXED: Resolve end_datetime to actual datetime for cache key consistency
+  const actualEndDatetime = end_datetime || new Date().toISOString();
+  const cacheKey = `heart_rate:${start_datetime}:${actualEndDatetime}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
@@ -557,20 +579,28 @@ async function handleGetHeartRate(args: any): Promise<string> {
 /**
  * Handler for get_workouts tool
  * 
- * BUG FIX: HEART RATE DATA
- * - BEFORE: average_heart_rate: 0, max_heart_rate: 0
- * - AFTER: Fetch real HR data from getHeartRate endpoint
- * - WHY: HR data IS available, just needs to be fetched for workout timeframe
+ * BUG FIXES:
+ * 1. HEART RATE DATA
+ *    - BEFORE: average_heart_rate: 0, max_heart_rate: 0
+ *    - AFTER: Fetch real HR data from getHeartRate endpoint
+ *    - WHY: HR data IS available, just needs to be fetched for workout timeframe
+ * 
+ * 2. CACHE KEY BUG: Use actual end_date instead of literal 'today'
+ *    - BEFORE: cacheKey = `workouts:${start_date}:${end_date || 'today'}`
+ *    - AFTER: cacheKey = `workouts:${start_date}:${actualEndDate}`
+ *    - WHY: Cache key must match actual data fetched
  */
 async function handleGetWorkouts(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = `workouts:${start_date}:${end_date || 'today'}`;
+  // FIXED: Resolve end_date to actual date for cache key consistency
+  const actualEndDate = end_date || getTodayDate();
+  const cacheKey = `workouts:${start_date}:${actualEndDate}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getWorkouts(start_date, end_date || getTodayDate());
+  const data = await getWorkouts(start_date, actualEndDate);
 
   // FIXED: Fetch heart rate data for each workout period
   const mapped = await Promise.all(
@@ -632,16 +662,20 @@ async function handleGetWorkouts(args: any): Promise<string> {
  * - Includes heart rate sample arrays
  * - Preserves ISO 8601 timestamps with timezone
  * - FIXED: Now calculates real efficiency from time_in_bed vs total_sleep_duration
+ * 
+ * CACHE KEY BUG FIX: Use actual end_date instead of literal 'today'
  */
 async function handleGetSleepDetailed(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = `sleep_detailed:${start_date}:${end_date || 'today'}`;
+  // FIXED: Resolve end_date to actual date for cache key consistency
+  const actualEndDate = end_date || getTodayDate();
+  const cacheKey = `sleep_detailed:${start_date}:${actualEndDate}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getSleepPeriods(start_date, end_date || getTodayDate());
+  const data = await getSleepPeriods(start_date, actualEndDate);
 
   const mapped = data.map((item) => {
     // FIXED: Calculate real efficiency
@@ -688,16 +722,20 @@ async function handleGetSleepDetailed(args: any): Promise<string> {
 
 /**
  * Handler for get_tags tool
+ * 
+ * CACHE KEY BUG FIX: Use actual end_date instead of literal 'today'
  */
 async function handleGetTags(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
   const { start_date, end_date } = params;
 
-  const cacheKey = `tags:${start_date}:${end_date || 'today'}`;
+  // FIXED: Resolve end_date to actual date for cache key consistency
+  const actualEndDate = end_date || getTodayDate();
+  const cacheKey = `tags:${start_date}:${actualEndDate}`;
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getTags(start_date, end_date || getTodayDate());
+  const data = await getTags(start_date, actualEndDate);
 
   const mapped = data.map((item) => ({
     date: item.timestamp,
