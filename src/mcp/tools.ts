@@ -275,6 +275,21 @@ async function handleGetPersonalInfo(): Promise<string> {
  *    - BEFORE: ...(include_hrv && { hrv_balance: 0 })
  *    - AFTER: Fetch from getDailyReadiness and getSleepPeriods
  *    - WHY: HRV is not in daily_sleep endpoint, must use readiness/detailed sleep
+ * 
+ * 3. SLEEP EFFICIENCY & DURATION: Cross-reference with detailed sleep periods
+ *    - BEFORE: Used daily_sleep contributors which may be scored/aggregated
+ *    - AFTER: Use detailed sleep periods for actual time_in_bed and total_sleep_duration
+ *    - WHY: daily_sleep contributors.efficiency is a score; need raw calculation
+ * 
+ * 4. AWAKE TIME: Calculate from actual time in bed vs sleep duration
+ *    - BEFORE: item.contributors.total_sleep * (1 - item.contributors.efficiency / 100)
+ *    - AFTER: detailedSleep.time_in_bed - detailedSleep.total_sleep_duration
+ *    - WHY: Previous calculation was based on efficiency score, not actual awake time
+ * 
+ * 5. RAW HRV/RHR VALUES: Add explicit raw value fields
+ *    - NEW: hrv_average_ms (raw HRV in milliseconds)
+ *    - NEW: resting_heart_rate_bpm (raw RHR in beats per minute)
+ *    - WHY: Users need access to raw physiological values, not just contributor scores
  */
 async function handleGetSleepSummary(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string; include_hrv?: boolean }>(sleepSummarySchema, args);
@@ -284,30 +299,65 @@ async function handleGetSleepSummary(args: any): Promise<string> {
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getDailySleep(start_date, end_date || getTodayDate());
+  // FIXED: Fetch ALL necessary data sources for accurate calculations
+  const [data, detailedSleepData] = await Promise.all([
+    getDailySleep(start_date, end_date || getTodayDate()),
+    getSleepPeriods(start_date, end_date || getTodayDate()), // CRITICAL: For accurate duration/efficiency
+  ]);
   
-  // FIXED: Fetch both readiness (for HRV balance) and detailed sleep (for HRV samples)
+  // FIXED: Fetch both readiness (for HRV balance + RHR) and detailed sleep (for HRV samples)
   let readinessData: any[] = [];
-  let detailedSleepData: any[] = [];
   if (include_hrv) {
-    [readinessData, detailedSleepData] = await Promise.all([
-      getDailyReadiness(start_date, end_date || getTodayDate()),
-      getSleepPeriods(start_date, end_date || getTodayDate()),
-    ]);
+    readinessData = await getDailyReadiness(start_date, end_date || getTodayDate());
   }
 
   const mapped = data.map((item) => {
-    // FIXED: No unit conversion - values already in seconds
+    // FIXED: Get detailed sleep period for this day for accurate calculations
+    // The detailed sleep endpoint provides the ACTUAL raw values
+    const detailedSleep = detailedSleepData.find((d) => d.day === item.day);
+    
+    // FIXED: Calculate actual sleep metrics from detailed data when available
+    let total_sleep_duration = item.contributors.total_sleep; // Fallback
+    let calculated_efficiency = item.contributors.efficiency; // Fallback
+    let awake_time = item.contributors.total_sleep * (1 - item.contributors.efficiency / 100); // Fallback
+    let time_in_bed = total_sleep_duration + awake_time; // Fallback
+    
+    if (detailedSleep) {
+      // Use ACTUAL values from detailed sleep period
+      total_sleep_duration = detailedSleep.total_sleep_duration || total_sleep_duration;
+      time_in_bed = detailedSleep.time_in_bed || time_in_bed;
+      awake_time = detailedSleep.awake_time || awake_time;
+      
+      // FIXED: Calculate REAL efficiency from actual time in bed vs sleep duration
+      // Efficiency = (total_sleep_duration / time_in_bed) * 100
+      if (time_in_bed > 0) {
+        calculated_efficiency = (total_sleep_duration / time_in_bed) * 100;
+      }
+    }
+    
+    // FIXED: Use detailed sleep for component durations too
+    const deep_sleep_duration = detailedSleep?.deep_sleep_duration || item.contributors.deep_sleep;
+    const rem_sleep_duration = detailedSleep?.rem_sleep_duration || item.contributors.rem_sleep;
+    const light_sleep_duration = detailedSleep?.light_sleep_duration || 
+      (total_sleep_duration - deep_sleep_duration - rem_sleep_duration);
+    const latency = detailedSleep?.latency || item.contributors.latency;
+
+    // Base data with FIXED calculations
     const baseData = {
       date: item.day,
       score: item.score,
-      total_sleep_duration: item.contributors.total_sleep, // Already in seconds
-      efficiency: item.contributors.efficiency,
-      latency: item.contributors.latency, // Already in seconds
-      deep_sleep_duration: item.contributors.deep_sleep, // Already in seconds
-      rem_sleep_duration: item.contributors.rem_sleep, // Already in seconds
-      light_sleep_duration: item.contributors.total_sleep - item.contributors.deep_sleep - item.contributors.rem_sleep,
-      awake_time: item.contributors.total_sleep * (1 - item.contributors.efficiency / 100),
+      // CRITICAL FIXES for duration and efficiency
+      total_sleep_duration: total_sleep_duration, // In seconds, from detailed sleep
+      time_in_bed: time_in_bed, // In seconds, from detailed sleep
+      efficiency: calculated_efficiency, // FIXED: Real percentage calculation
+      efficiency_score: item.contributors.efficiency, // Original score for reference
+      awake_time: awake_time, // FIXED: Actual awake time from detailed sleep
+      // Component durations
+      latency: latency,
+      deep_sleep_duration: deep_sleep_duration,
+      rem_sleep_duration: rem_sleep_duration,
+      light_sleep_duration: light_sleep_duration,
+      // Other contributors
       restfulness: item.contributors.restfulness,
       timing: item.contributors.timing,
     };
@@ -315,13 +365,15 @@ async function handleGetSleepSummary(args: any): Promise<string> {
     // FIXED: Get real HRV data from appropriate endpoints
     if (include_hrv) {
       const readiness = readinessData.find((r) => r.day === item.day);
-      const detailedSleep = detailedSleepData.find((d) => d.day === item.day);
       
       return {
         ...baseData,
+        // Contributor scores (0-100)
         hrv_balance: readiness?.contributors.hrv_balance ?? null,
-        hrv_average: detailedSleep?.average_hrv ?? null,
+        // RAW VALUES - What users actually need!
+        hrv_average_ms: detailedSleep?.average_hrv ?? null, // FIXED: Raw HRV in milliseconds
         hrv_samples_count: detailedSleep?.hrv?.items?.length ?? 0,
+        resting_heart_rate_bpm: readiness?.contributors.resting_heart_rate ?? null, // FIXED: Raw RHR in BPM
       };
     }
 
@@ -333,6 +385,7 @@ async function handleGetSleepSummary(args: any): Promise<string> {
     average_duration: mapped.reduce((acc, item) => acc + item.total_sleep_duration, 0) / mapped.length,
     average_duration_hours: (mapped.reduce((acc, item) => acc + item.total_sleep_duration, 0) / mapped.length) / 3600,
     average_efficiency: mapped.reduce((acc, item) => acc + item.efficiency, 0) / mapped.length,
+    average_time_in_bed: mapped.reduce((acc, item) => acc + item.time_in_bed, 0) / mapped.length,
     total_days: mapped.length,
   };
 
@@ -363,11 +416,11 @@ async function handleGetReadinessScore(args: any): Promise<string> {
     temperature_trend_deviation: item.temperature_trend_deviation,
     activity_balance: item.contributors.activity_balance,
     body_temperature: item.contributors.body_temperature,
-    hrv_balance: item.contributors.hrv_balance, // Real HRV balance
+    hrv_balance: item.contributors.hrv_balance, // HRV contributor score (0-100)
     previous_day_activity: item.contributors.previous_day_activity,
     previous_night: item.contributors.previous_night,
     recovery_index: item.contributors.recovery_index,
-    resting_heart_rate: item.contributors.resting_heart_rate, // Real RHR
+    resting_heart_rate: item.contributors.resting_heart_rate, // Raw RHR in BPM
     sleep_balance: item.contributors.sleep_balance,
   }));
 
@@ -578,6 +631,7 @@ async function handleGetWorkouts(args: any): Promise<string> {
  * - Includes full HRV sample arrays
  * - Includes heart rate sample arrays
  * - Preserves ISO 8601 timestamps with timezone
+ * - FIXED: Now calculates real efficiency from time_in_bed vs total_sleep_duration
  */
 async function handleGetSleepDetailed(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
@@ -589,34 +643,43 @@ async function handleGetSleepDetailed(args: any): Promise<string> {
 
   const data = await getSleepPeriods(start_date, end_date || getTodayDate());
 
-  const mapped = data.map((item) => ({
-    date: item.day,
-    type: item.type,
-    bedtime_start: item.bedtime_start, // ISO 8601 with timezone
-    bedtime_end: item.bedtime_end, // ISO 8601 with timezone
-    breath_average: item.average_breath,
-    heart_rate: {
-      interval: item.heart_rate.interval,
-      samples: item.heart_rate.items,
-      average: item.average_heart_rate,
-      lowest: item.lowest_heart_rate,
-    },
-    hrv: {
-      interval: item.hrv.interval,
-      samples: item.hrv.items,
-      average: item.average_hrv,
-    },
-    movement_30_sec: item.movement_30_sec,
-    sleep_phase_5_min: item.sleep_phase_5_min,
-    // Additional sleep metrics (all in seconds)
-    total_sleep_duration: item.total_sleep_duration,
-    deep_sleep_duration: item.deep_sleep_duration,
-    light_sleep_duration: item.light_sleep_duration,
-    rem_sleep_duration: item.rem_sleep_duration,
-    awake_time: item.awake_time,
-    efficiency: item.efficiency,
-    latency: item.latency,
-  }));
+  const mapped = data.map((item) => {
+    // FIXED: Calculate real efficiency
+    const calculated_efficiency = item.time_in_bed > 0 
+      ? (item.total_sleep_duration / item.time_in_bed) * 100 
+      : 0;
+    
+    return {
+      date: item.day,
+      type: item.type,
+      bedtime_start: item.bedtime_start, // ISO 8601 with timezone
+      bedtime_end: item.bedtime_end, // ISO 8601 with timezone
+      breath_average: item.average_breath,
+      heart_rate: {
+        interval: item.heart_rate.interval,
+        samples: item.heart_rate.items,
+        average: item.average_heart_rate,
+        lowest: item.lowest_heart_rate,
+      },
+      hrv: {
+        interval: item.hrv.interval,
+        samples: item.hrv.items,
+        average: item.average_hrv, // Raw HRV in milliseconds
+      },
+      movement_30_sec: item.movement_30_sec,
+      sleep_phase_5_min: item.sleep_phase_5_min,
+      // Sleep metrics (all in seconds)
+      time_in_bed: item.time_in_bed,
+      total_sleep_duration: item.total_sleep_duration,
+      deep_sleep_duration: item.deep_sleep_duration,
+      light_sleep_duration: item.light_sleep_duration,
+      rem_sleep_duration: item.rem_sleep_duration,
+      awake_time: item.awake_time,
+      efficiency: calculated_efficiency, // FIXED: Real percentage
+      efficiency_raw: item.efficiency, // Original value for reference
+      latency: item.latency,
+    };
+  });
 
   const result = JSON.stringify({ data: mapped }, null, 2);
   cache.set(cacheKey, result);
