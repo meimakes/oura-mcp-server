@@ -267,34 +267,13 @@ async function handleGetPersonalInfo(): Promise<string> {
  * 
  * BUG FIXES:
  * 1. SLEEP DURATION UNITS: Removed incorrect * 3600 conversion
- *    - BEFORE: item.contributors.total_sleep * 3600
- *    - AFTER: item.contributors.total_sleep
- *    - WHY: Oura API already returns durations in SECONDS, not hours
- *    
  * 2. HRV DATA: Fetch real HRV from readiness + detailed sleep endpoints
- *    - BEFORE: ...(include_hrv && { hrv_balance: 0 })
- *    - AFTER: Fetch from getDailyReadiness and getSleepPeriods
- *    - WHY: HRV is not in daily_sleep endpoint, must use readiness/detailed sleep
- * 
  * 3. SLEEP EFFICIENCY & DURATION: Cross-reference with detailed sleep periods
- *    - BEFORE: Used daily_sleep contributors which may be scored/aggregated
- *    - AFTER: Use detailed sleep periods for actual time_in_bed and total_sleep_duration
- *    - WHY: daily_sleep contributors.efficiency is a score; need raw calculation
- * 
  * 4. AWAKE TIME: Calculate from actual time in bed vs sleep duration
- *    - BEFORE: item.contributors.total_sleep * (1 - item.contributors.efficiency / 100)
- *    - AFTER: detailedSleep.time_in_bed - detailedSleep.total_sleep_duration
- *    - WHY: Previous calculation was based on efficiency score, not actual awake time
- * 
  * 5. RAW HRV/RHR VALUES: Add explicit raw value fields
- *    - NEW: hrv_average_ms (raw HRV in milliseconds)
- *    - NEW: resting_heart_rate_bpm (raw RHR in beats per minute)
- *    - WHY: Users need access to raw physiological values, not just contributor scores
- * 
  * 6. CACHE KEY BUG: Fixed to use actual end_date instead of literal 'today'
- *    - BEFORE: cacheKey = `sleep_summary:${start_date}:${end_date || 'today'}:${include_hrv}`
- *    - AFTER: cacheKey = `sleep_summary:${start_date}:${actualEndDate}:${include_hrv}`
- *    - WHY: Cache key must match actual data fetched, prevents cross-day contamination
+ * 7. DATE MATCHING VALIDATION: Validate dates align between endpoints
+ * 8. FALLBACK LOGIC: Use nullish coalescing (??) to handle zero values correctly
  */
 async function handleGetSleepSummary(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string; include_hrv?: boolean }>(sleepSummarySchema, args);
@@ -312,16 +291,47 @@ async function handleGetSleepSummary(args: any): Promise<string> {
     getSleepPeriods(start_date, actualEndDate), // CRITICAL: For accurate duration/efficiency
   ]);
   
+  // VALIDATION: Check date alignment between endpoints
+  const dailySleepDates = new Set(data.map(item => item.day));
+  const detailedSleepDates = new Set(detailedSleepData.map(item => item.day));
+  
+  const missingDetailedDates = [...dailySleepDates].filter(date => !detailedSleepDates.has(date));
+  if (missingDetailedDates.length > 0) {
+    logger.warn(`Daily sleep has dates not in detailed sleep: ${missingDetailedDates.join(', ')}`);
+  }
+  
   // FIXED: Fetch both readiness (for HRV balance + RHR) and detailed sleep (for HRV samples)
   let readinessData: any[] = [];
+  let missingReadinessDates: string[] = [];
+  
   if (include_hrv) {
     readinessData = await getDailyReadiness(start_date, actualEndDate);
+    
+    // VALIDATION: Check HRV data alignment
+    const readinessDates = new Set(readinessData.map(item => item.day));
+    missingReadinessDates = [...dailySleepDates].filter(date => !readinessDates.has(date));
+    
+    if (missingReadinessDates.length > 0) {
+      logger.warn(`HRV requested but readiness data missing for dates: ${missingReadinessDates.join(', ')}`);
+    }
   }
+
+  // Track data quality metadata
+  let daysWithDetailedData = 0;
+  let daysWithReadinessData = 0;
+  let daysWithFallbackData = 0;
 
   const mapped = data.map((item) => {
     // FIXED: Get detailed sleep period for this day for accurate calculations
-    // The detailed sleep endpoint provides the ACTUAL raw values
     const detailedSleep = detailedSleepData.find((d) => d.day === item.day);
+    
+    // VALIDATION: Log if detailed sleep is missing for this specific day
+    if (!detailedSleep) {
+      logger.debug(`Using fallback sleep calculations for ${item.day} (no detailed sleep data)`);
+      daysWithFallbackData++;
+    } else {
+      daysWithDetailedData++;
+    }
     
     // FIXED: Calculate actual sleep metrics from detailed data when available
     let total_sleep_duration = item.contributors.total_sleep; // Fallback
@@ -330,35 +340,34 @@ async function handleGetSleepSummary(args: any): Promise<string> {
     let time_in_bed = total_sleep_duration + awake_time; // Fallback
     
     if (detailedSleep) {
-      // Use ACTUAL values from detailed sleep period
-      total_sleep_duration = detailedSleep.total_sleep_duration || total_sleep_duration;
-      time_in_bed = detailedSleep.time_in_bed || time_in_bed;
-      awake_time = detailedSleep.awake_time || awake_time;
+      // FIXED: Use nullish coalescing to handle zero values correctly
+      total_sleep_duration = detailedSleep.total_sleep_duration ?? total_sleep_duration;
+      time_in_bed = detailedSleep.time_in_bed ?? time_in_bed;
+      awake_time = detailedSleep.awake_time ?? awake_time;
       
       // FIXED: Calculate REAL efficiency from actual time in bed vs sleep duration
-      // Efficiency = (total_sleep_duration / time_in_bed) * 100
       if (time_in_bed > 0) {
         calculated_efficiency = (total_sleep_duration / time_in_bed) * 100;
       }
     }
     
     // FIXED: Use detailed sleep for component durations too
-    const deep_sleep_duration = detailedSleep?.deep_sleep_duration || item.contributors.deep_sleep;
-    const rem_sleep_duration = detailedSleep?.rem_sleep_duration || item.contributors.rem_sleep;
-    const light_sleep_duration = detailedSleep?.light_sleep_duration || 
+    const deep_sleep_duration = detailedSleep?.deep_sleep_duration ?? item.contributors.deep_sleep;
+    const rem_sleep_duration = detailedSleep?.rem_sleep_duration ?? item.contributors.rem_sleep;
+    const light_sleep_duration = detailedSleep?.light_sleep_duration ?? 
       (total_sleep_duration - deep_sleep_duration - rem_sleep_duration);
-    const latency = detailedSleep?.latency || item.contributors.latency;
+    const latency = detailedSleep?.latency ?? item.contributors.latency;
 
     // Base data with FIXED calculations
     const baseData = {
       date: item.day,
       score: item.score,
       // CRITICAL FIXES for duration and efficiency
-      total_sleep_duration: total_sleep_duration, // In seconds, from detailed sleep
-      time_in_bed: time_in_bed, // In seconds, from detailed sleep
-      efficiency: calculated_efficiency, // FIXED: Real percentage calculation
-      efficiency_score: item.contributors.efficiency, // Original score for reference
-      awake_time: awake_time, // FIXED: Actual awake time from detailed sleep
+      total_sleep_duration: total_sleep_duration,
+      time_in_bed: time_in_bed,
+      efficiency: calculated_efficiency,
+      efficiency_score: item.contributors.efficiency,
+      awake_time: awake_time,
       // Component durations
       latency: latency,
       deep_sleep_duration: deep_sleep_duration,
@@ -367,20 +376,31 @@ async function handleGetSleepSummary(args: any): Promise<string> {
       // Other contributors
       restfulness: item.contributors.restfulness,
       timing: item.contributors.timing,
+      // DATA QUALITY: Indicate if detailed data was used
+      has_detailed_sleep: detailedSleep !== undefined,
     };
 
     // FIXED: Get real HRV data from appropriate endpoints
     if (include_hrv) {
       const readiness = readinessData.find((r) => r.day === item.day);
       
+      // VALIDATION: Track readiness data availability
+      if (readiness) {
+        daysWithReadinessData++;
+      } else {
+        logger.debug(`No readiness data for ${item.day}, HRV values will be null`);
+      }
+      
       return {
         ...baseData,
         // Contributor scores (0-100)
         hrv_balance: readiness?.contributors.hrv_balance ?? null,
         // RAW VALUES - What users actually need!
-        hrv_average_ms: detailedSleep?.average_hrv ?? null, // FIXED: Raw HRV in milliseconds
+        hrv_average_ms: detailedSleep?.average_hrv ?? null,
         hrv_samples_count: detailedSleep?.hrv?.items?.length ?? 0,
-        resting_heart_rate_bpm: readiness?.contributors.resting_heart_rate ?? null, // FIXED: Raw RHR in BPM
+        resting_heart_rate_bpm: readiness?.contributors.resting_heart_rate ?? null,
+        // DATA QUALITY: Indicate if HRV data was found
+        has_readiness_data: readiness !== undefined,
       };
     }
 
@@ -394,6 +414,13 @@ async function handleGetSleepSummary(args: any): Promise<string> {
     average_efficiency: mapped.reduce((acc, item) => acc + item.efficiency, 0) / mapped.length,
     average_time_in_bed: mapped.reduce((acc, item) => acc + item.time_in_bed, 0) / mapped.length,
     total_days: mapped.length,
+    // DATA QUALITY METADATA
+    days_with_detailed_sleep: daysWithDetailedData,
+    days_with_fallback_calculations: daysWithFallbackData,
+    ...(include_hrv && {
+      days_with_hrv_data: daysWithReadinessData,
+      days_missing_hrv: missingReadinessDates.length,
+    }),
   };
 
   const result = JSON.stringify({ data: mapped, summary }, null, 2);
@@ -507,19 +534,8 @@ async function handleGetActivitySummary(args: any): Promise<string> {
  * 
  * BUG FIXES:
  * 1. RHR CALCULATION: Use real RHR from getDailyReadiness instead of Math.min
- *    - BEFORE: resting_hr: Math.min(...bpms.slice(0, 10))
- *    - AFTER: Fetch from readiness.contributors.resting_heart_rate
- *    - WHY: Minimum BPM is not the same as resting heart rate
- *    
  * 2. TIMEZONE HANDLING: Preserve ISO 8601 timestamps
- *    - BEFORE: No timezone awareness
- *    - AFTER: Proper date parsing from ISO strings
- *    - WHY: Ensure accurate time-based queries
- * 
  * 3. CACHE KEY BUG: Use actual end_datetime instead of literal 'now'
- *    - BEFORE: cacheKey = `heart_rate:${start_datetime}:${end_datetime || 'now'}`
- *    - AFTER: cacheKey = `heart_rate:${start_datetime}:${actualEndDatetime}`
- *    - WHY: Cache key must match actual data fetched
  */
 async function handleGetHeartRate(args: any): Promise<string> {
   const params = validateParams<{ start_datetime: string; end_datetime?: string }>(datetimeRangeSchema, args);
@@ -580,15 +596,8 @@ async function handleGetHeartRate(args: any): Promise<string> {
  * Handler for get_workouts tool
  * 
  * BUG FIXES:
- * 1. HEART RATE DATA
- *    - BEFORE: average_heart_rate: 0, max_heart_rate: 0
- *    - AFTER: Fetch real HR data from getHeartRate endpoint
- *    - WHY: HR data IS available, just needs to be fetched for workout timeframe
- * 
+ * 1. HEART RATE DATA: Fetch real HR data from getHeartRate endpoint
  * 2. CACHE KEY BUG: Use actual end_date instead of literal 'today'
- *    - BEFORE: cacheKey = `workouts:${start_date}:${end_date || 'today'}`
- *    - AFTER: cacheKey = `workouts:${start_date}:${actualEndDate}`
- *    - WHY: Cache key must match actual data fetched
  */
 async function handleGetWorkouts(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
@@ -657,12 +666,6 @@ async function handleGetWorkouts(args: any): Promise<string> {
  * Handler for get_sleep_detailed tool
  * 
  * ENDPOINT CONSISTENCY: Uses detailed sleep periods for comprehensive data
- * - Includes actual duration values (already in seconds)
- * - Includes full HRV sample arrays
- * - Includes heart rate sample arrays
- * - Preserves ISO 8601 timestamps with timezone
- * - FIXED: Now calculates real efficiency from time_in_bed vs total_sleep_duration
- * 
  * CACHE KEY BUG FIX: Use actual end_date instead of literal 'today'
  */
 async function handleGetSleepDetailed(args: any): Promise<string> {
@@ -678,9 +681,9 @@ async function handleGetSleepDetailed(args: any): Promise<string> {
   const data = await getSleepPeriods(start_date, actualEndDate);
 
   const mapped = data.map((item) => {
-    // FIXED: Calculate real efficiency
-    const calculated_efficiency = item.time_in_bed > 0 
-      ? (item.total_sleep_duration / item.time_in_bed) * 100 
+    // FIXED: Calculate real efficiency using nullish coalescing
+    const calculated_efficiency = (item.time_in_bed ?? 0) > 0 
+      ? ((item.total_sleep_duration ?? 0) / (item.time_in_bed ?? 1)) * 100 
       : 0;
     
     return {
