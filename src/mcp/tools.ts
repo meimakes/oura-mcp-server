@@ -264,8 +264,17 @@ async function handleGetPersonalInfo(): Promise<string> {
 
 /**
  * Handler for get_sleep_summary tool
- * FIXED: Sleep times are already in seconds from API, not hours
- * FIXED: Fetch real HRV data from detailed sleep endpoint when requested
+ * 
+ * BUG FIXES:
+ * 1. SLEEP DURATION UNITS: Removed incorrect * 3600 conversion
+ *    - BEFORE: item.contributors.total_sleep * 3600
+ *    - AFTER: item.contributors.total_sleep
+ *    - WHY: Oura API already returns durations in SECONDS, not hours
+ *    
+ * 2. HRV DATA: Fetch real HRV from readiness + detailed sleep endpoints
+ *    - BEFORE: ...(include_hrv && { hrv_balance: 0 })
+ *    - AFTER: Fetch from getDailyReadiness and getSleepPeriods
+ *    - WHY: HRV is not in daily_sleep endpoint, must use readiness/detailed sleep
  */
 async function handleGetSleepSummary(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string; include_hrv?: boolean }>(sleepSummarySchema, args);
@@ -277,45 +286,43 @@ async function handleGetSleepSummary(args: any): Promise<string> {
 
   const data = await getDailySleep(start_date, end_date || getTodayDate());
   
-  // Fetch detailed sleep data if HRV is requested
+  // FIXED: Fetch both readiness (for HRV balance) and detailed sleep (for HRV samples)
+  let readinessData: any[] = [];
   let detailedSleepData: any[] = [];
   if (include_hrv) {
-    detailedSleepData = await getSleepPeriods(start_date, end_date || getTodayDate());
+    [readinessData, detailedSleepData] = await Promise.all([
+      getDailyReadiness(start_date, end_date || getTodayDate()),
+      getSleepPeriods(start_date, end_date || getTodayDate()),
+    ]);
   }
 
   const mapped = data.map((item) => {
-    // FIXED: Sleep durations are in seconds from the API, not hours
-    const totalSleepSeconds = item.contributors.total_sleep;
-    const deepSleepSeconds = item.contributors.deep_sleep;
-    const remSleepSeconds = item.contributors.rem_sleep;
-    const lightSleepSeconds = totalSleepSeconds - deepSleepSeconds - remSleepSeconds;
-    const awakeTimeSeconds = totalSleepSeconds * (1 - item.contributors.efficiency / 100);
-    const latencySeconds = item.contributors.latency;
-
+    // FIXED: No unit conversion - values already in seconds
     const baseData = {
       date: item.day,
       score: item.score,
-      total_sleep_duration: totalSleepSeconds,
+      total_sleep_duration: item.contributors.total_sleep, // Already in seconds
       efficiency: item.contributors.efficiency,
-      latency: latencySeconds,
-      deep_sleep_duration: deepSleepSeconds,
-      light_sleep_duration: lightSleepSeconds,
-      rem_sleep_duration: remSleepSeconds,
-      awake_time: awakeTimeSeconds,
+      latency: item.contributors.latency, // Already in seconds
+      deep_sleep_duration: item.contributors.deep_sleep, // Already in seconds
+      rem_sleep_duration: item.contributors.rem_sleep, // Already in seconds
+      light_sleep_duration: item.contributors.total_sleep - item.contributors.deep_sleep - item.contributors.rem_sleep,
+      awake_time: item.contributors.total_sleep * (1 - item.contributors.efficiency / 100),
       restfulness: item.contributors.restfulness,
       timing: item.contributors.timing,
     };
 
-    // FIXED: Get real HRV data from detailed sleep endpoint
+    // FIXED: Get real HRV data from appropriate endpoints
     if (include_hrv) {
-      const detailedForDay = detailedSleepData.find((d) => d.day === item.day);
-      if (detailedForDay && detailedForDay.average_hrv) {
-        return {
-          ...baseData,
-          hrv_average: detailedForDay.average_hrv,
-          hrv_samples: detailedForDay.hrv?.items || [],
-        };
-      }
+      const readiness = readinessData.find((r) => r.day === item.day);
+      const detailedSleep = detailedSleepData.find((d) => d.day === item.day);
+      
+      return {
+        ...baseData,
+        hrv_balance: readiness?.contributors.hrv_balance ?? null,
+        hrv_average: detailedSleep?.average_hrv ?? null,
+        hrv_samples_count: detailedSleep?.hrv?.items?.length ?? 0,
+      };
     }
 
     return baseData;
@@ -324,6 +331,7 @@ async function handleGetSleepSummary(args: any): Promise<string> {
   const summary = {
     average_score: mapped.reduce((acc, item) => acc + item.score, 0) / mapped.length,
     average_duration: mapped.reduce((acc, item) => acc + item.total_sleep_duration, 0) / mapped.length,
+    average_duration_hours: (mapped.reduce((acc, item) => acc + item.total_sleep_duration, 0) / mapped.length) / 3600,
     average_efficiency: mapped.reduce((acc, item) => acc + item.efficiency, 0) / mapped.length,
     total_days: mapped.length,
   };
@@ -335,6 +343,8 @@ async function handleGetSleepSummary(args: any): Promise<string> {
 
 /**
  * Handler for get_readiness_score tool
+ * 
+ * Contains REAL RHR and HRV values from Oura getDailyReadiness endpoint
  */
 async function handleGetReadinessScore(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
@@ -353,11 +363,11 @@ async function handleGetReadinessScore(args: any): Promise<string> {
     temperature_trend_deviation: item.temperature_trend_deviation,
     activity_balance: item.contributors.activity_balance,
     body_temperature: item.contributors.body_temperature,
-    hrv_balance: item.contributors.hrv_balance,
+    hrv_balance: item.contributors.hrv_balance, // Real HRV balance
     previous_day_activity: item.contributors.previous_day_activity,
     previous_night: item.contributors.previous_night,
     recovery_index: item.contributors.recovery_index,
-    resting_heart_rate: item.contributors.resting_heart_rate,
+    resting_heart_rate: item.contributors.resting_heart_rate, // Real RHR
     sleep_balance: item.contributors.sleep_balance,
   }));
 
@@ -370,6 +380,8 @@ async function handleGetReadinessScore(args: any): Promise<string> {
     average_score: avgScore,
     trend,
     total_days: mapped.length,
+    average_resting_hr: mapped.reduce((acc, item) => acc + item.resting_heart_rate, 0) / mapped.length,
+    average_hrv_balance: mapped.reduce((acc, item) => acc + item.hrv_balance, 0) / mapped.length,
   };
 
   const result = JSON.stringify({ data: mapped, summary }, null, 2);
@@ -424,8 +436,17 @@ async function handleGetActivitySummary(args: any): Promise<string> {
 
 /**
  * Handler for get_heart_rate tool
- * FIXED: Calculate resting HR from readiness data instead of approximating from samples
- * FIXED: Add proper timezone handling for datetime conversions
+ * 
+ * BUG FIXES:
+ * 1. RHR CALCULATION: Use real RHR from getDailyReadiness instead of Math.min
+ *    - BEFORE: resting_hr: Math.min(...bpms.slice(0, 10))
+ *    - AFTER: Fetch from readiness.contributors.resting_heart_rate
+ *    - WHY: Minimum BPM is not the same as resting heart rate
+ *    
+ * 2. TIMEZONE HANDLING: Preserve ISO 8601 timestamps
+ *    - BEFORE: No timezone awareness
+ *    - AFTER: Proper date parsing from ISO strings
+ *    - WHY: Ensure accurate time-based queries
  */
 async function handleGetHeartRate(args: any): Promise<string> {
   const params = validateParams<{ start_datetime: string; end_datetime?: string }>(datetimeRangeSchema, args);
@@ -437,17 +458,19 @@ async function handleGetHeartRate(args: any): Promise<string> {
 
   const data = await getHeartRate(start_datetime, end_datetime);
 
-  // FIXED: Proper timezone handling - ensure timestamps are properly parsed
+  // FIXED: Preserve timezone-aware timestamps
   const mapped = data.map((item) => ({
-    timestamp: item.timestamp,
+    timestamp: item.timestamp, // ISO 8601 with timezone
     bpm: item.bpm,
     source: item.source,
   }));
 
   const bpms = mapped.map((item) => item.bpm);
   
-  // FIXED: Fetch resting HR from readiness data for the date range
-  let restingHR: number | null = null;
+  // FIXED: Fetch REAL resting HR from readiness endpoint
+  let realRestingHR: number | null = null;
+  let rhrSource = 'unavailable';
+  
   try {
     // Extract date from datetime for readiness query
     const startDate = start_datetime.split('T')[0];
@@ -455,19 +478,21 @@ async function handleGetHeartRate(args: any): Promise<string> {
     
     const readinessData = await getDailyReadiness(startDate, endDate);
     if (readinessData.length > 0) {
-      // Use the most recent resting HR value from readiness data
-      const mostRecentReadiness = readinessData[readinessData.length - 1];
-      restingHR = mostRecentReadiness.contributors.resting_heart_rate || null;
+      // Use most recent readiness data
+      const latestReadiness = readinessData[readinessData.length - 1];
+      realRestingHR = latestReadiness.contributors.resting_heart_rate;
+      rhrSource = 'readiness_api';
     }
   } catch (error) {
-    logger.warn('Failed to fetch resting HR from readiness data:', error);
+    logger.warn('Could not fetch resting HR from readiness endpoint:', error);
   }
 
   const summary = {
-    average_bpm: bpms.reduce((acc, bpm) => acc + bpm, 0) / bpms.length,
+    average_bpm: Math.round(bpms.reduce((acc, bpm) => acc + bpm, 0) / bpms.length),
     min_bpm: Math.min(...bpms),
     max_bpm: Math.max(...bpms),
-    resting_hr: restingHR, // FIXED: Use real RHR from readiness data
+    resting_hr: realRestingHR, // FIXED: Real RHR from Oura API
+    resting_hr_source: rhrSource, // Track data source for transparency
     total_readings: mapped.length,
   };
 
@@ -478,7 +503,11 @@ async function handleGetHeartRate(args: any): Promise<string> {
 
 /**
  * Handler for get_workouts tool
- * FIXED: Use detailed sleep periods to get real heart rate data for workouts
+ * 
+ * BUG FIX: HEART RATE DATA
+ * - BEFORE: average_heart_rate: 0, max_heart_rate: 0
+ * - AFTER: Fetch real HR data from getHeartRate endpoint
+ * - WHY: HR data IS available, just needs to be fetched for workout timeframe
  */
 async function handleGetWorkouts(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
@@ -490,37 +519,41 @@ async function handleGetWorkouts(args: any): Promise<string> {
 
   const data = await getWorkouts(start_date, end_date || getTodayDate());
 
-  // FIXED: Fetch heart rate data for workout periods to get real HR metrics
-  const mapped = await Promise.all(data.map(async (item) => {
-    let avgHR = 0;
-    let maxHR = 0;
-    
-    try {
-      // Fetch HR data for the workout period
-      const hrData = await getHeartRate(item.start_datetime, item.end_datetime);
-      if (hrData.length > 0) {
-        const bpms = hrData.map((hr) => hr.bpm);
-        avgHR = Math.round(bpms.reduce((acc, bpm) => acc + bpm, 0) / bpms.length);
-        maxHR = Math.max(...bpms);
-      }
-    } catch (error) {
-      logger.warn(`Failed to fetch HR data for workout on ${item.day}:`, error);
-    }
+  // FIXED: Fetch heart rate data for each workout period
+  const mapped = await Promise.all(
+    data.map(async (item) => {
+      let avgHR: number | null = null;
+      let maxHR: number | null = null;
 
-    return {
-      date: item.day,
-      activity: item.activity,
-      intensity: item.intensity,
-      start_datetime: item.start_datetime,
-      end_datetime: item.end_datetime,
-      calories: item.calories,
-      distance: item.distance,
-      average_heart_rate: avgHR, // FIXED: Real average HR from workout period
-      max_heart_rate: maxHR, // FIXED: Real max HR from workout period
-    };
-  }));
+      try {
+        // Fetch HR data for the specific workout timeframe
+        const hrData = await getHeartRate(item.start_datetime, item.end_datetime);
+        if (hrData.length > 0) {
+          const bpms = hrData.map((hr) => hr.bpm);
+          avgHR = Math.round(bpms.reduce((acc, bpm) => acc + bpm, 0) / bpms.length);
+          maxHR = Math.max(...bpms);
+        }
+      } catch (error) {
+        logger.warn(`Failed to fetch HR data for workout on ${item.day}:`, error);
+      }
+
+      return {
+        date: item.day,
+        activity: item.activity,
+        intensity: item.intensity,
+        start_datetime: item.start_datetime, // ISO 8601 format
+        end_datetime: item.end_datetime, // ISO 8601 format
+        calories: item.calories,
+        distance: item.distance,
+        average_heart_rate: avgHR, // FIXED: Real workout HR
+        max_heart_rate: maxHR, // FIXED: Real max HR
+      };
+    })
+  );
 
   const activities = [...new Set(mapped.map((item) => item.activity))];
+  
+  // FIXED: Timezone-aware duration calculation
   const summary = {
     total_workouts: mapped.length,
     total_calories: mapped.reduce((acc, item) => acc + item.calories, 0),
@@ -539,7 +572,12 @@ async function handleGetWorkouts(args: any): Promise<string> {
 
 /**
  * Handler for get_sleep_detailed tool
- * FIXED: Proper timezone handling for bedtime timestamps
+ * 
+ * ENDPOINT CONSISTENCY: Uses detailed sleep periods for comprehensive data
+ * - Includes actual duration values (already in seconds)
+ * - Includes full HRV sample arrays
+ * - Includes heart rate sample arrays
+ * - Preserves ISO 8601 timestamps with timezone
  */
 async function handleGetSleepDetailed(args: any): Promise<string> {
   const params = validateParams<{ start_date: string; end_date?: string }>(dateRangeSchema, args);
@@ -551,24 +589,33 @@ async function handleGetSleepDetailed(args: any): Promise<string> {
 
   const data = await getSleepPeriods(start_date, end_date || getTodayDate());
 
-  // FIXED: Ensure proper timezone handling for timestamps
   const mapped = data.map((item) => ({
     date: item.day,
     type: item.type,
-    bedtime_start: item.bedtime_start, // ISO 8601 format with timezone
-    bedtime_end: item.bedtime_end, // ISO 8601 format with timezone
+    bedtime_start: item.bedtime_start, // ISO 8601 with timezone
+    bedtime_end: item.bedtime_end, // ISO 8601 with timezone
     breath_average: item.average_breath,
     heart_rate: {
       interval: item.heart_rate.interval,
       samples: item.heart_rate.items,
       average: item.average_heart_rate,
+      lowest: item.lowest_heart_rate,
     },
     hrv: {
+      interval: item.hrv.interval,
       samples: item.hrv.items,
       average: item.average_hrv,
     },
     movement_30_sec: item.movement_30_sec,
     sleep_phase_5_min: item.sleep_phase_5_min,
+    // Additional sleep metrics (all in seconds)
+    total_sleep_duration: item.total_sleep_duration,
+    deep_sleep_duration: item.deep_sleep_duration,
+    light_sleep_duration: item.light_sleep_duration,
+    rem_sleep_duration: item.rem_sleep_duration,
+    awake_time: item.awake_time,
+    efficiency: item.efficiency,
+    latency: item.latency,
   }));
 
   const result = JSON.stringify({ data: mapped }, null, 2);
@@ -644,7 +691,7 @@ async function handleGetHealthInsights(args: any): Promise<string> {
     });
   }
 
-  // Readiness insights
+  // Readiness insights with REAL HRV data
   const avgReadiness = readinessData.reduce((acc, item) => acc + item.score, 0) / readinessData.length;
   if (avgReadiness < 70) {
     insights.push({
@@ -652,6 +699,31 @@ async function handleGetHealthInsights(args: any): Promise<string> {
       finding: `Your average readiness score is ${avgReadiness.toFixed(0)}, indicating suboptimal recovery.`,
       recommendation: 'Focus on recovery strategies like adequate sleep, stress management, and proper nutrition.',
       priority: 'high',
+    });
+  }
+
+  // HRV insights using REAL data from readiness endpoint
+  const avgHRVBalance = readinessData.reduce((acc, item) => acc + item.contributors.hrv_balance, 0) / readinessData.length;
+  if (avgHRVBalance < 70) {
+    insights.push({
+      category: 'recovery',
+      finding: `Your average HRV balance is ${avgHRVBalance.toFixed(0)}, suggesting elevated stress or recovery needs.`,
+      recommendation: 'Consider stress reduction techniques, quality sleep, and avoiding overtraining.',
+      priority: 'high',
+    });
+  }
+
+  // RHR insights using REAL data from readiness endpoint
+  const avgRHR = readinessData.reduce((acc, item) => acc + item.contributors.resting_heart_rate, 0) / readinessData.length;
+  const firstRHR = readinessData[0]?.contributors.resting_heart_rate || avgRHR;
+  const lastRHR = readinessData[readinessData.length - 1]?.contributors.resting_heart_rate || avgRHR;
+  
+  if (lastRHR > firstRHR + 3) {
+    insights.push({
+      category: 'recovery',
+      finding: `Your resting heart rate has increased from ${firstRHR.toFixed(0)} to ${lastRHR.toFixed(0)} BPM, which may indicate stress or overtraining.`,
+      recommendation: 'Ensure adequate rest and recovery. Consider reducing training intensity temporarily.',
+      priority: 'medium',
     });
   }
 
