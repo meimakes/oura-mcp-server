@@ -1,6 +1,5 @@
 # Oura MCP Server
 
-[![UPSTRM](https://www.upstrm.dev/api/badge/2?token=b48c2b26-7a64-4941-bc63-96289890221b)](https://www.upstrm.dev/server/2/oura-mcp-server)
 
 MCP (Model Context Protocol) server that enables AI assistants to access your Oura Ring health data through OAuth2-authenticated API calls.
 
