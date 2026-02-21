@@ -8,7 +8,7 @@ Built by [@meimakes](https://x.com/meimakes)
 
 Built for seamless integration with [Poke](https://poke.com) and other MCP-compatible clients. Deploy to Railway for production use or run locally for development.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https://github.com/meimakes/oura-mcp-server&referralCode=a6V1Do)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/YWxHvn?referralCode=a6V1Do&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 ## Features
 
