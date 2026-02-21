@@ -3,6 +3,9 @@
 
 MCP (Model Context Protocol) server that enables AI assistants to access your Oura Ring health data through OAuth2-authenticated API calls.
 
+Built by [@meimakes](https://x.com/meimakes)
+
+
 Built for seamless integration with [Poke](https://poke.com) and other MCP-compatible clients. Deploy to Railway for production use or run locally for development.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/Kt-3nX?referralCode=7zdyjn&utm_medium=integration&utm_source=template&utm_campaign=generic)
